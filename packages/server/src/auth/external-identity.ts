@@ -42,3 +42,9 @@ export interface ExternalIdentityAdapter {
     clientId?: string,
   ) => Effect.Effect<ExternalIdentityInfo, UnauthorizedError>
 }
+
+// --- ExternalIdentityAdapter Tag (Context key for the adapter) ---
+
+export const ExternalIdentityAdapterTag = Context.Service<ExternalIdentityAdapter>(
+  "@opencode/ExternalIdentityAdapter",
+)
