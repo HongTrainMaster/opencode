@@ -1,5 +1,5 @@
 import { Effect, Layer } from "effect"
-import { HttpClient, HttpClientRequest } from "effect/unstable/http"
+import { HttpClient, HttpClientError, HttpClientRequest } from "effect/unstable/http"
 import { ExternalIdentityAdapterTag, ExternalIdentityInfo } from "@opencode-ai/server/auth/external-identity"
 import { ExternalAuthConfig } from "@opencode-ai/server/auth/external-config"
 import { UnauthorizedError } from "@opencode-ai/protocol/errors"
@@ -71,7 +71,7 @@ function callGetInfo(
       ),
     )
 
-    const body: ApiResponse<UserInfoData> = yield* response.json
+    const body = (yield* response.json) as unknown as ApiResponse<UserInfoData>
 
     if (body.code !== 200) {
       return yield* new UnauthorizedError({ message: body.msg ?? "Authentication failed" })
@@ -81,7 +81,12 @@ function callGetInfo(
     }
 
     return body.data
-  })
+  }).pipe(
+    Effect.mapError((error) => {
+      if (error instanceof UnauthorizedError) return error
+      return new UnauthorizedError({ message: "HTTP request failed" })
+    }),
+  )
 }
 
 function callGetKnowledge(
@@ -97,14 +102,17 @@ function callGetKnowledge(
       ),
     )
 
-    const body: ApiResponse<KnowledgeInfoData> = yield* response.json
+    const body = (yield* response.json) as unknown as ApiResponse<KnowledgeInfoData>
 
     if (body.code !== 200) {
       return { workspaces: [], permissions: {} }
     }
 
     return body.data ?? { workspaces: [], permissions: {} }
-  })
+  }).pipe(
+    Effect.option,
+    Effect.map((maybe) => maybe._tag === "Some" ? maybe.value : { workspaces: [], permissions: {} } as KnowledgeInfoData),
+  )
 }
 
 // -- Layer --

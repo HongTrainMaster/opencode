@@ -106,10 +106,11 @@ import { sessionLocationLayer } from "@opencode-ai/server/middleware/session-loc
 import { PtyEnvironment } from "@opencode-ai/server/pty-environment"
 import { schemaErrorLayer as v2SchemaErrorLayer } from "@opencode-ai/server/middleware/schema-error"
 import { KnowledgeSessionHandler } from "./handlers/knowledge"
+import { ExternalIdentity } from "@opencode-ai/server/auth/external-identity"
 import { externalAuthLayer } from "@opencode-ai/server/middleware/external-auth"
 import { ExternalAuthConfig } from "@opencode-ai/server/auth/external-config"
 import { KnowledgeApi } from "./groups/knowledge"
-import { KnowledgeAdapterLayer } from "../../auth/knowledge-adapter"
+import { KnowledgeAdapterLayer } from "@/server/auth/knowledge-adapter"
 import { workspaceHandlers } from "./handlers/workspace"
 import { instanceContextLayer } from "./middleware/instance-context"
 import { workspaceRoutingLayer } from "./middleware/workspace-routing"
@@ -278,13 +279,20 @@ export function createRoutes(
 ): Layer.Layer<never, EffectConfig.ConfigError, RouteRequirements> {
   const locationServiceMapV2 = buildLocationServiceMap()
 
-  const knowledgeExternalAuthLayer = externalAuthLayer.pipe(
-    Layer.provide(ExternalAuthConfig.layer),
-  )
+  const fallbackIdentity = ExternalIdentity.Info.make({
+    userId: "",
+    nickName: "",
+    tenantId: "",
+    workspaces: [],
+    permissions: {},
+  })
   const knowledgeApiRoutes = HttpApiBuilder.layer(KnowledgeApi).pipe(
     Layer.provide(KnowledgeSessionHandler),
-    Layer.provide(knowledgeExternalAuthLayer),
+    Layer.provide(externalAuthLayer),
     Layer.provide(KnowledgeAdapterLayer),
+    Layer.provide(ExternalAuthConfig.layer),
+    Layer.provide(Layer.succeed(ExternalIdentity, ExternalIdentity.of(fallbackIdentity))),
+    Layer.provide(schemaErrorLayer),
   )
 
   return Layer.mergeAll(
