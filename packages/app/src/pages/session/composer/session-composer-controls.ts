@@ -88,7 +88,7 @@ export function createPromptProjectControls() {
     // so the new-session dialog always shows the current directory as a project.
     const dir = sdk().directory
     if (search.draftId && dir && !list.some((p) => p.worktree === dir)) {
-      list = [{ worktree: dir, name: getFilename(dir) }, ...list]
+      list = [{ worktree: dir, name: getFilename(dir), expanded: true }, ...list]
     }
 
     return list
