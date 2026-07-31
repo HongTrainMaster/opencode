@@ -11,8 +11,11 @@ const Category = Schema.Struct({
 })
 
 const Workspace = Schema.Struct({
-  id: Schema.String,
-  name: Schema.String,
+  workspaceId: Schema.String,
+  workspaceName: Schema.String,
+  workspaceType: Schema.optional(Schema.String),
+  description: Schema.optional(Schema.String),
+  llmPath: Schema.optional(Schema.String),
   categories: Schema.Array(Category),
 })
 

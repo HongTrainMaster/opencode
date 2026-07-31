@@ -60,8 +60,8 @@ describe("KnowledgeAdapter", () => {
         data: {
           workspaces: [
             {
-              id: "kb_001",
-              name: "Product Knowledge Base",
+              workspaceId: "kb_001",
+              workspaceName: "Product Knowledge Base",
               categories: [
                 {
                   categoryId: "cat_1",
@@ -83,8 +83,8 @@ describe("KnowledgeAdapter", () => {
     expect(result.nickName).toBe("Admin")
     expect(result.tenantId).toBe("tenant_01")
     expect(result.workspaces).toHaveLength(1)
-    expect(result.workspaces[0].id).toBe("kb_001")
-    expect(result.workspaces[0].name).toBe("Product Knowledge Base")
+    expect(result.workspaces[0].workspaceId).toBe("kb_001")
+    expect(result.workspaces[0].workspaceName).toBe("Product Knowledge Base")
     expect(result.workspaces[0].categories).toHaveLength(1)
     expect(result.workspaces[0].categories[0].categoryId).toBe("cat_1")
     expect(result.permissions["kb_001"]).toEqual(["read", "write", "admin"])

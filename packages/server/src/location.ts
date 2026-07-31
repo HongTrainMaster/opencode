@@ -2,7 +2,7 @@ import { Location } from "@opencode-ai/core/location"
 import { LocationServiceMap } from "@opencode-ai/core/location-services"
 import { AbsolutePath } from "@opencode-ai/core/schema"
 import { WorkspaceV2 } from "@opencode-ai/core/workspace"
-import { Effect, Layer } from "effect"
+import { Effect, Exit, Layer } from "effect"
 import { HttpServerRequest } from "effect/unstable/http"
 import { HttpApiMiddleware } from "effect/unstable/httpapi"
 
@@ -53,8 +53,14 @@ export const layer = Layer.effect(
     return LocationMiddleware.of((effect) =>
       Effect.gen(function* () {
         const request = yield* HttpServerRequest.HttpServerRequest
-        return yield* effect.pipe(Effect.provide(locations.get(ref(request))))
-      }),
+        const exit = yield* locations.get(ref(request)).pipe(Layer.build, Effect.exit)
+        if (Exit.isSuccess(exit)) {
+          return yield* effect.pipe(Effect.provide(exit.value))
+        }
+        // If the location services fail to boot for this request, run the
+        // effect without them rather than failing the whole request.
+        return yield* effect
+      }) as any,
     )
   }),
 )

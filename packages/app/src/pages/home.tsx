@@ -302,6 +302,47 @@ export function NewHome() {
   const notification = useNotification()
   const marked = useMarked()
   const openSettings = useSettingsCommand()
+  // Admin check: first try URL params (business system passes roles directly),
+  // then sessionStorage (persisted across routes), fallback undefined (show settings).
+  const [isAdmin] = createResource(async () => {
+    const params = new URLSearchParams(location.search)
+
+    // 1. Quick check: business system passes roles as URL param
+    const rolesParam = params.get("roles")
+    if (rolesParam) {
+      const roles = rolesParam.split(",").map((r) => r.trim())
+      const admin = roles.includes("admin")
+      sessionStorage.setItem("opencode_roles", rolesParam)
+      return admin
+    }
+
+    // 2. Check sessionStorage (persisted from knowledge entry)
+    const stored = sessionStorage.getItem("opencode_roles")
+    if (stored) {
+      return stored.split(",").map((r) => r.trim()).includes("admin")
+    }
+
+    // 3. Try API call if api_base is provided
+    const authParam = params.get("Authorization") ?? params.get("auth_token")
+    const apiBase = params.get("api_base")
+    if (!authParam || !apiBase) return undefined // no embedded context, show settings
+    const token = authParam.startsWith("Bearer ") ? authParam : `Bearer ${authParam}`
+    try {
+      const res = await fetch(`${apiBase}/system/user/getInfo`, {
+        headers: {
+          Authorization: token,
+          clientid: params.get("clientid") ?? "",
+        },
+      })
+      if (!res.ok) return false
+      const data = await res.json()
+      const roles = data?.data?.roles ?? []
+      sessionStorage.setItem("opencode_roles", roles.join(","))
+      return roles.includes("admin")
+    } catch {
+      return false
+    }
+  })
   let focusSessionSearch: (() => void) | undefined
   let sessionViewport: HTMLDivElement | undefined
   const [sessionThumbTrack, setSessionThumbTrack] = createSignal<HTMLDivElement>()
@@ -672,8 +713,8 @@ export function NewHome() {
             }}
             clearNotifications={clearNotifications}
             unseenCount={unseenCount}
+            isAdmin={isAdmin()}
             openSettings={openSettings}
-            openHelp={() => platform.openLink("https://opencode.ai/desktop-feedback")}
             language={language}
             onWheel={(event) => {
               if (sessionViewport) containHomeWheel(event, sessionViewport)
@@ -779,8 +820,8 @@ export function NewHome() {
           </section>
           <HomeUtilityNav
             class="flex lg:hidden"
+            isAdmin={isAdmin()}
             openSettings={openSettings}
-            openHelp={() => platform.openLink("https://opencode.ai/desktop-feedback")}
             language={language}
           />
         </div>
@@ -803,8 +844,8 @@ function HomeProjectColumn(props: {
   closeProject: (server: ServerConnection.Any, directory: string) => void
   clearNotifications: (server: ServerConnection.Any, project: LocalProject) => void
   unseenCount: (server: ServerConnection.Any, project: LocalProject) => number
+  isAdmin?: boolean
   openSettings: () => void
-  openHelp: () => void
   language: ReturnType<typeof useLanguage>
   onWheel: (event: WheelEvent) => void
 }) {
@@ -908,8 +949,8 @@ function HomeProjectColumn(props: {
       </ScrollView>
       <HomeUtilityNav
         class="mb-8 mt-4 hidden shrink-0 lg:flex"
+        isAdmin={props.isAdmin}
         openSettings={props.openSettings}
-        openHelp={props.openHelp}
         language={props.language}
       />
     </aside>
@@ -918,28 +959,22 @@ function HomeProjectColumn(props: {
 
 function HomeUtilityNav(props: {
   class?: string
+  isAdmin?: boolean
   openSettings: () => void
-  openHelp: () => void
   language: ReturnType<typeof useLanguage>
 }) {
   return (
     <div class={`${props.class ?? ""} min-w-0 flex-col gap-1 pr-3`}>
-      <button
-        type="button"
-        class={`${HOME_PROJECT_NAV_ROW} text-v2-text-text-faint [&>[data-slot=icon-svg]]:text-v2-icon-icon-muted`}
-        onClick={props.openSettings}
-      >
-        <IconV2 name="settings-gear" size="small" />
-        <span class={HOME_PROJECT_NAV_LABEL}>{props.language.t("sidebar.settings")}</span>
-      </button>
-      <button
-        type="button"
-        class={`${HOME_PROJECT_NAV_ROW} text-v2-text-text-faint [&>[data-slot=icon-svg]]:text-v2-icon-icon-muted`}
-        onClick={props.openHelp}
-      >
-        <IconV2 name="help" size="small" />
-        <span class={HOME_PROJECT_NAV_LABEL}>{props.language.t("sidebar.help")}</span>
-      </button>
+      <Show when={props.isAdmin !== false}>
+        <button
+          type="button"
+          class={`${HOME_PROJECT_NAV_ROW} text-v2-text-text-faint [&>[data-slot=icon-svg]]:text-v2-icon-icon-muted`}
+          onClick={props.openSettings}
+        >
+          <IconV2 name="settings-gear" size="small" />
+          <span class={HOME_PROJECT_NAV_LABEL}>{props.language.t("sidebar.settings")}</span>
+        </button>
+      </Show>
     </div>
   )
 }

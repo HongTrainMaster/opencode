@@ -81,6 +81,7 @@ type CreateInput = {
   agent?: AgentV2.ID
   model?: ModelV2.Ref
   location: Location.Ref
+  metadata?: Record<string, unknown>
 }
 
 type CompactInput = {
@@ -236,6 +237,7 @@ const layer = Layer.effect(
             : undefined,
           cost: 0,
           tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+          metadata: input.metadata,
           time: { created: now, updated: now },
         })
         const projected = yield* events

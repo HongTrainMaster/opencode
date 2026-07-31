@@ -6,8 +6,6 @@ describe("VirtualWorkspaceResolver", () => {
     const result = VirtualWorkspaceResolver.resolve({
       userId: "42",
       tenantId: "000000",
-      workspaces: [],
-      permissions: {},
     }, "kb_001")
     expect(result.directory).toContain("virtual")
     expect(result.directory).toContain("000000")

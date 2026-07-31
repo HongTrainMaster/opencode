@@ -9,5 +9,8 @@ export const Info = Schema.Struct({
   urls: Schema.optional(Schema.Array(Schema.String)).annotate({
     description: "URLs to fetch skills from (e.g., https://example.com/.well-known/skills/)",
   }),
+  defaultSkill: Schema.optional(Schema.String).annotate({
+    description: "Skill name to automatically load at conversation start",
+  }),
 })
 export type Info = Schema.Schema.Type<typeof Info>

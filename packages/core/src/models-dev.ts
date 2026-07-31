@@ -175,19 +175,27 @@ const layer = Layer.effect(
       )
     })
 
-    const loadFromDisk = fs.readJson(Flag.OPENCODE_MODELS_PATH ?? filepath).pipe(
+    // The network catalog cache. `OPENCODE_MODELS_PATH`, when set, points at a
+    // separate offline/subscription catalog (e.g. console/console-go) and must
+    // not shadow this cache, otherwise a fresh fetch would never be used.
+    const loadCache = fs.readJson(filepath).pipe(
       Effect.catch((error) => {
-        if (
-          Flag.OPENCODE_MODELS_PATH === undefined &&
-          error._tag === "FileSystemError" &&
-          error.method === "readJson"
-        ) {
+        if (error._tag === "FileSystemError" && error.method === "readJson") {
           return fs.remove(filepath, { force: true }).pipe(Effect.ignore, Effect.as(undefined))
         }
         return Effect.succeed(undefined)
       }),
       Effect.map((v) => v as Record<string, Provider> | undefined),
     )
+
+    // The explicit offline/subscription catalog, if configured.
+    const loadFromFile = Effect.gen(function* () {
+      if (Flag.OPENCODE_MODELS_PATH === undefined) return undefined
+      return yield* fs.readJson(Flag.OPENCODE_MODELS_PATH).pipe(
+        Effect.catch(() => Effect.succeed(undefined)),
+        Effect.map((v) => v as Record<string, Provider> | undefined),
+      )
+    })
 
     const loadSnapshot = Effect.sync(() =>
       typeof OPENCODE_MODELS_DEV === "undefined" ? undefined : OPENCODE_MODELS_DEV,
@@ -208,20 +216,50 @@ const layer = Layer.effect(
       return text
     })
 
+    // Merge the explicit offline/subscription catalog into the network catalog.
+    // `console`/`console-go` subscription models are not on models.dev, so they
+    // must survive a network refresh; providers the network already knows keep
+    // the network's (typically newer) definitions.
+    const mergeFile = (loaded: Record<string, Provider>) =>
+      Effect.gen(function* () {
+        const fromFile = yield* loadFromFile
+        if (!fromFile) return loaded
+        const merged: Record<string, Provider> = { ...loaded }
+        for (const [id, provider] of Object.entries(fromFile)) {
+          if (!merged[id]) merged[id] = provider
+        }
+        return merged
+      })
+
     const populate = Effect.gen(function* () {
-      const fromDisk = yield* loadFromDisk
-      if (fromDisk) return fromDisk
-      const snapshot = yield* loadSnapshot
-      if (snapshot) return snapshot
-      if (Flag.OPENCODE_DISABLE_MODELS_FETCH) return {}
-      // Flock is cross-process: concurrent opencode CLIs can race on this cache file.
-      const text = yield* Effect.scoped(
-        Effect.gen(function* () {
-          yield* Flock.effect(lockKey)
-          return yield* fetchAndWrite()
-        }),
-      )
-      return JSON.parse(text) as Record<string, Provider>
+      if (!Flag.OPENCODE_DISABLE_MODELS_FETCH) {
+        // Prefer the network catalog. On failure, fall back to the last cached
+        // fetch, then the built-in snapshot. The offline/subscription file is
+        // merged in last so it can add providers models.dev doesn't have.
+        const fetched = yield* Effect.scoped(
+          Effect.gen(function* () {
+            yield* Flock.effect(lockKey)
+            return yield* fetchAndWrite()
+          }),
+        ).pipe(
+          Effect.flatMap((text) => Effect.sync(() => JSON.parse(text) as Record<string, Provider>)),
+          Effect.catch(() => loadCache),
+          Effect.catch(() => loadSnapshot),
+        )
+        if (fetched) return yield* mergeFile(fetched)
+        const fromFile = yield* loadFromFile
+        if (fromFile) return fromFile
+      } else {
+        // Fetching is disabled: use the offline/subscription file first, then
+        // whatever network cache/snapshot already exists on disk.
+        const fromFile = yield* loadFromFile
+        if (fromFile) return fromFile
+        const cached = yield* loadCache
+        if (cached) return cached
+        const snapshot = yield* loadSnapshot
+        if (snapshot) return snapshot
+      }
+      return {}
     }).pipe(Effect.withSpan("ModelsDev.populate"), Effect.orDie)
 
     const [cachedGet, invalidate] = yield* Effect.cachedInvalidateWithTTL(populate, Duration.infinity)

@@ -71,11 +71,16 @@ export const externalAuthLayer = Layer.effect(
         const maybeAdapter = yield* Effect.serviceOption(ExternalIdentityAdapterTag)
         if (maybeAdapter._tag === "None") return yield* effect
 
-        return yield* maybeAdapter.value.authenticate(token).pipe(
-          Effect.flatMap((identity) =>
-            effect.pipe(Effect.provideService(ExternalIdentity, identity)),
-          ),
-          Effect.catchCause(() => Effect.fail(new HttpApiError.Unauthorized({}))),
+        const info = yield* maybeAdapter.value.authenticate(
+          token,
+          request.headers.clientid,
+        ).pipe(
+          Effect.catchCause(() => Effect.succeed(null as any)),
+        )
+        if (!info) return yield* effect
+
+        return yield* effect.pipe(
+          Effect.provideService(ExternalIdentity, ExternalIdentity.of(info)),
         )
       }),
     )
@@ -94,9 +99,9 @@ export const externalAuthRouterMiddleware = HttpRouter.middleware()(
         const maybeAdapter = yield* Effect.serviceOption(ExternalIdentityAdapterTag)
         if (maybeAdapter._tag === "None") return yield* effect
 
-        return yield* maybeAdapter.value.authenticate(token).pipe(
-          Effect.flatMap((identity) =>
-            effect.pipe(Effect.provideService(ExternalIdentity, identity)),
+        return yield* maybeAdapter.value.authenticate(token, request.headers.clientid).pipe(
+          Effect.flatMap((info) =>
+            effect.pipe(Effect.provideService(ExternalIdentity, ExternalIdentity.of(info))),
           ),
           Effect.catchCause(() => Effect.fail(new HttpApiError.Unauthorized({}))),
         )

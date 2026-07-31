@@ -577,7 +577,10 @@ function Routes(props: { serverScoped?: JSX.Element }) {
     <>
       <Route
         component={(routeProps) => (
-          <LegacyServerLayout serverScoped={props.serverScoped}>{routeProps.children}</LegacyServerLayout>
+          <LegacyServerLayout serverScoped={props.serverScoped}>
+            <Route path="/session/:id" component={SessionRoute} />
+            {routeProps.children}
+          </LegacyServerLayout>
         )}
       >
         <Show when={!settings.general.newLayoutDesigns()}>
@@ -600,7 +603,8 @@ function Routes(props: { serverScoped?: JSX.Element }) {
       </Show>
       <Route path="/new-session" component={DraftRoute} />
       <Route path="/knowledge" component={KnowledgeHome} />
-      <Route path="/knowledge/session/:id" component={SessionRoute} />
+      <Route path="/knowledge/home" component={KnowledgeHome} />
+      <Route path="/knowledge/index.html" component={KnowledgeHome} />
     </>
   )
 }

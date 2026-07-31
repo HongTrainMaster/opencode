@@ -32,3 +32,22 @@ UPCOMING_CHANGELOG.md
 logs/
 *.bun-build
 tsconfig.tsbuildinfo
+
+# Local integration / deployment artifacts (never commit)
+*.exe
+*.rar
+*.zip
+*.tar.gz
+serve-err.txt
+serve-out.txt
+.claude/
+.playwright-mcp/
+knowledge-with-workspace.png
+models-selector.png
+start-server.cmd
+start.ps1
+.opencode/skills/deploy/
+
+# Generated video/media output
+artifacts/**/out/*.mp4
+artifacts/**/out/*.png

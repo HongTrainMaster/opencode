@@ -10,6 +10,8 @@ import { HttpApiBuilder } from "effect/unstable/httpapi"
 import { InstanceHttpApi } from "../api"
 import { ProviderAuthApiError } from "../groups/provider"
 import { ProviderV2 } from "@opencode-ai/core/provider"
+import { Flag } from "@opencode-ai/core/flag/flag"
+import { readFileSync } from "fs"
 
 function mapProviderAuthError<A, R>(self: Effect.Effect<A, ProviderAuth.Error, R>) {
   return self.pipe(
@@ -31,6 +33,18 @@ function mapProviderAuthError<A, R>(self: Effect.Effect<A, ProviderAuth.Error, R
   )
 }
 
+// Fallback: read models from local JSON when ModelsDev is unavailable
+function loadModelsFromFile() {
+  try {
+    const path = Flag.OPENCODE_MODELS_PATH || ""
+    if (!path) return {}
+    const raw = readFileSync(path, "utf-8")
+    return JSON.parse(raw) as Record<string, any>
+  } catch {
+    return {}
+  }
+}
+
 export const providerHandlers = HttpApiBuilder.group(InstanceHttpApi, "provider", (handlers) =>
   Effect.gen(function* () {
     const cfg = yield* Config.Service
@@ -39,7 +53,12 @@ export const providerHandlers = HttpApiBuilder.group(InstanceHttpApi, "provider"
 
     const list = Effect.fn("ProviderHttpApi.list")(function* () {
       const config = yield* cfg.get()
-      const all = yield* ModelsDev.Service.use((s) => s.get())
+      let all
+      try {
+        all = yield* ModelsDev.Service.use((s) => s.get())
+      } catch {
+        all = loadModelsFromFile()
+      }
       const disabled = new Set(config.disabled_providers ?? [])
       const enabled = config.enabled_providers ? new Set(config.enabled_providers) : undefined
       const filtered: Record<string, (typeof all)[string]> = {}

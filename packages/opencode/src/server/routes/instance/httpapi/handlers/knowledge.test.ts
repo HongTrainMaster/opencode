@@ -25,7 +25,7 @@ const testIdentity = ExternalIdentityInfo.make({
   nickName: "Test User",
   tenantId: "tenant_01",
   workspaces: [
-    { id: "ws_1", name: "Workspace 1", categories: [] },
+    { workspaceId: "ws_1", workspaceName: "Workspace 1", categories: [] },
   ],
   permissions: {},
 })
@@ -192,7 +192,7 @@ describe("Knowledge HttpApi", () => {
       expect(response.status).toBe(200)
       const body = (yield* response.json) as any
       expect(body.data).toHaveLength(1)
-      expect(body.data[0].id).toBe("ws_1")
+      expect(body.data[0].workspaceId).toBe("ws_1")
     }),
   )
 })

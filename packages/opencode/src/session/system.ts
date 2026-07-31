@@ -17,6 +17,7 @@ import type { Provider } from "@/provider/provider"
 import type { Agent } from "@/agent/agent"
 import { Permission } from "@/permission"
 import { Skill } from "@/skill"
+import { Config } from "@/config/config"
 import { AbsolutePath } from "@opencode-ai/core/schema"
 import { Location } from "@opencode-ai/core/location"
 import { LocationServiceMap, locationServiceMapLayer } from "@opencode-ai/core/location-services"
@@ -45,6 +46,7 @@ export interface Interface {
   readonly environment: (model: Provider.Model) => Effect.Effect<string[]>
   readonly skills: (agent: Agent.Info) => Effect.Effect<string | undefined>
   readonly mcp: (agent: Agent.Info, permission?: PermissionV1.Ruleset) => Effect.Effect<string | undefined>
+  readonly defaultSkill: () => Effect.Effect<string | undefined>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/SystemPrompt") {}
@@ -55,6 +57,8 @@ const layer = Layer.effect(
     const skill = yield* Skill.Service
     const mcp = yield* MCP.Service
     const locations = yield* LocationServiceMap.Service
+
+    const config = yield* Config.Service
 
     return Service.of({
       environment: Effect.fn("SystemPrompt.environment")(function* (model: Provider.Model) {
@@ -126,6 +130,21 @@ const layer = Layer.effect(
           "</mcp_instructions>",
         ].join("\n")
       }),
+
+      defaultSkill: Effect.fn("SystemPrompt.defaultSkill")(function* () {
+        const cfg = yield* config.get()
+        const name = cfg.skills?.defaultSkill
+        if (!name) return
+
+        const info = yield* skill.get(name)
+        if (!info) return
+
+        return [
+          `<auto_loaded_skill name="${info.name}">`,
+          info.content.trim(),
+          "</auto_loaded_skill>",
+        ].join("\n")
+      }),
     })
   }),
 )
@@ -139,7 +158,7 @@ const locationServiceMapNode = LayerNode.make({
 export const node = LayerNode.make({
   service: Service,
   layer: layer,
-  deps: [Skill.node, MCP.node, locationServiceMapNode],
+  deps: [Skill.node, MCP.node, Config.node, locationServiceMapNode],
 })
 
 export * as SystemPrompt from "./system"

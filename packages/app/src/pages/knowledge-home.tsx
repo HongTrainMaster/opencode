@@ -1,24 +1,85 @@
-import { createResource, createSignal, For, Show } from "solid-js"
-
-const userInfo = () => (window as any).__USER_INFO__ ?? { workspaces: [], nickName: "" }
+import { base64Encode } from "@opencode-ai/core/util/encode"
+import { createEffect, createResource, createSignal, For, Show } from "solid-js"
+import { useNavigate } from "@solidjs/router"
+import { useTabs } from "@/context/tabs"
+import { useServer } from "@/context/server"
 
 export function KnowledgeHome() {
   const [selectedWorkspace, setSelectedWorkspace] = createSignal<string | null>(null)
-  const authToken = () => encodeURIComponent((window as any).__INITIAL_AUTH_TOKEN__ ?? "")
-  const apiBase = () => {
+  const navigate = useNavigate()
+  const tabs = useTabs()
+  const server = useServer()
+  // Persist roles from URL params to sessionStorage for use across routes
+  createEffect(() => {
     const params = new URLSearchParams(location.search)
-    const authParam = params.get("auth_token")
-    return authParam ? `/knowledge/api` : "/knowledge/api"
+    const rolesParam = params.get("roles")
+    if (rolesParam) {
+      sessionStorage.setItem("opencode_roles", rolesParam)
+    }
+  })
+  // Auth token from URL query param (passed by the embedding app via iframe)
+  const authToken = () => {
+    const injected = (window as any).__INITIAL_AUTH_TOKEN__
+    if (injected) return encodeURIComponent(injected)
+    const params = new URLSearchParams(location.search)
+    const authParam = params.get("Authorization") ?? params.get("auth_token")
+    return authParam ? encodeURIComponent(authParam) : ""
+  }
+  const apiBase = () => "/serve/api"
+
+  // Fetch workspaces from the API
+  const [workspaces] = createResource(async () => {
+    const tok = authToken()
+    const url = tok ? `${apiBase()}/workspaces?Authorization=${tok}` : `${apiBase()}/workspaces`
+    const res = await fetch(url)
+    if (!res.ok) return []
+    const data = await res.json()
+    return data.data ?? []
+  })
+
+  // Directory comes from the workspace entry returned by the API; no hard-coded
+  // default so the page stays environment-agnostic.
+  const dirOf = (workspace: any) => workspace?.llmPath || workspace?.directory || ""
+
+  // Create a draft tab (new-session dialog) for the given workspace.
+  // Falls back to direct API session creation if the tab system is unavailable.
+  const handleCreateDraft = async (workspace: any) => {
+    const directory = dirOf(workspace)
+    if (server.key && tabs.ready()) {
+      tabs.newDraft({ server: server.key, directory })
+      return
+    }
+
+    // Fallback: create session directly via API (iframe / standalone mode)
+    const tok = authToken()
+    if (!tok) return
+    try {
+      const res = await fetch(`${apiBase()}/sessions?Authorization=${tok}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workspaceId: workspace.workspaceId }),
+      })
+      if (!res.ok) return
+      const data = await res.json()
+      if (data?.data?.id) {
+        const params = `Authorization=${tok}`
+        navigate(`/${base64Encode(directory)}/session/${data.data.id}?${params}`, { replace: true })
+      }
+    } catch {}
   }
 
-  const [sessions] = createResource(
-    selectedWorkspace,
-    async (wsId: string) => {
-      const res = await fetch(`${apiBase()}/sessions?workspaceId=${wsId}&limit=50`)
-      const data = await res.json()
-      return data.data ?? []
-    },
-  )
+  // Create a session with the first workspace (quick start)
+  const handleNewSession = () => {
+    const wsList = workspaces()
+    if (!wsList || wsList.length === 0) return
+    handleCreateDraft(wsList[0])
+  }
+  const handleSelectWorkspace = (workspaceId: string) => {
+    setSelectedWorkspace(workspaceId)
+    const wsList = workspaces()
+    const ws = wsList?.find((w: any) => w.workspaceId === workspaceId)
+    if (ws) handleCreateDraft(ws)
+  }
 
   return (
     <div class="knowledge-home">
@@ -29,25 +90,24 @@ export function KnowledgeHome() {
         .knowledge-workspace { display: block; width: 100%; text-align: left; padding: 10px 12px; margin-bottom: 4px; border: none; border-radius: 6px; background: transparent; cursor: pointer; font-size: 13px; transition: background 0.15s; }
         .knowledge-workspace:hover { background: #e8e8e8; }
         .knowledge-workspace.active { background: #d0d0ff; font-weight: 500; }
-        .knowledge-main { flex: 1; padding: 24px; overflow-y: auto; }
-        .knowledge-session-list { max-width: 640px; }
-        .knowledge-session-item { display: block; padding: 14px 16px; border: 1px solid #e8e8e8; border-radius: 8px; margin-bottom: 8px; text-decoration: none; color: inherit; transition: border-color 0.15s; }
-        .knowledge-session-item:hover { border-color: #8888ff; }
-        .knowledge-session-item h3 { font-size: 15px; font-weight: 500; margin: 0 0 4px; }
-        .knowledge-session-item time { font-size: 12px; color: #888; }
+        .knowledge-workspace:disabled { opacity: 0.6; cursor: default; }
+        .knowledge-main { flex: 1; padding: 24px; overflow-y: auto; display: flex; align-items: center; justify-content: center; }
         .knowledge-empty { color: #888; font-size: 14px; padding: 24px; text-align: center; }
-        .knowledge-header { font-size: 16px; font-weight: 600; margin-bottom: 16px; }
+        .knowledge-start-btn { display: inline-flex; align-items: center; gap: 8px; padding: 14px 32px; background: #4a6cf7; color: #fff; border: none; border-radius: 10px; font-size: 16px; cursor: pointer; transition: background 0.15s; }
+        .knowledge-start-btn:hover { background: #3b5de7; }
+        .knowledge-start-btn:disabled { opacity: 0.5; cursor: default; }
       `}</style>
 
       <nav class="knowledge-sidebar">
         <h2>知识库</h2>
-        <For each={userInfo().workspaces}>
+        <For each={workspaces()}>
           {(ws: any) => (
             <button
-              classList={{ "knowledge-workspace": true, active: selectedWorkspace() === ws.id }}
-              onClick={() => setSelectedWorkspace(ws.id)}
+              classList={{ "knowledge-workspace": true, active: selectedWorkspace() === ws.workspaceId }}
+              onClick={() => handleSelectWorkspace(ws.workspaceId)}
+              disabled={selectedWorkspace() === ws.workspaceId}
             >
-              {ws.name}
+              {ws.workspaceName}
             </button>
           )}
         </For>
@@ -55,34 +115,16 @@ export function KnowledgeHome() {
 
       <main class="knowledge-main">
         <Show when={!selectedWorkspace()}>
-          <div class="knowledge-empty">请选择一个知识库</div>
+            <div style="text-align:center;display:flex;flex-direction:column;align-items:center">
+            <div style="font-size:18px;font-weight:600;margin-bottom:24px;color:#333">开始新知识问答</div>
+            <button class="knowledge-start-btn" onClick={handleNewSession} disabled={workspaces.loading}>
+              {workspaces.loading ? "加载中..." : "新建会话 +"}
+            </button>
+            <div style="margin-top:16px;font-size:13px;color:#999">或从左侧选择一个知识库</div>
+          </div>
         </Show>
         <Show when={selectedWorkspace()}>
-          <div class="knowledge-header">历史会话</div>
-          <div class="knowledge-session-list">
-            <Show when={sessions.loading}>
-              <div class="knowledge-empty">加载中...</div>
-            </Show>
-            <Show when={sessions.error}>
-              <div class="knowledge-empty">加载失败，请刷新重试</div>
-            </Show>
-            <Show when={sessions()?.length === 0}>
-              <div class="knowledge-empty">暂无会话，返回知识库开始新对话</div>
-            </Show>
-            <For each={sessions()}>
-              {(session: any) => (
-                <a
-                  class="knowledge-session-item"
-                  href={`/knowledge/session/${session.id}?auth_token=${authToken()}`}
-                >
-                  <h3>{session.title ?? "新会话"}</h3>
-                  <Show when={session.time?.created}>
-                    <time>{new Date(session.time.created).toLocaleString()}</time>
-                  </Show>
-                </a>
-              )}
-            </For>
-          </div>
+          <div class="knowledge-empty">正在进入知识库...</div>
         </Show>
       </main>
     </div>

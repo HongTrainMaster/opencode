@@ -41,6 +41,7 @@ export const Info = Schema.Struct({
   location: Location.Ref,
   subpath: RelativePath.pipe(optional),
   revert: Revert.State.pipe(optional),
+  metadata: Schema.optional(Schema.Record(Schema.String, Schema.Any)),
 }).annotate({ identifier: "SessionV2.Info" })
 
 export const ListAnchor = Schema.Struct({

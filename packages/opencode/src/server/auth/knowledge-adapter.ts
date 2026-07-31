@@ -1,8 +1,8 @@
 import { Effect, Layer } from "effect"
-import { HttpClient, HttpClientError, HttpClientRequest } from "effect/unstable/http"
+import { HttpClient, HttpClientRequest } from "effect/unstable/http"
+import type { ExternalIdentityAdapter } from "@opencode-ai/server/auth/external-identity"
 import { ExternalIdentityAdapterTag, ExternalIdentityInfo } from "@opencode-ai/server/auth/external-identity"
 import { ExternalAuthConfig } from "@opencode-ai/server/auth/external-config"
-import { UnauthorizedError } from "@opencode-ai/protocol/errors"
 
 // -- Types for business system API responses --
 
@@ -12,19 +12,14 @@ interface ApiResponse<T = unknown> {
   data?: T
 }
 
-interface UserInfoData {
-  user: {
-    userId: number | string
-    nickName: string
-    tenantId?: string
-  }
-}
-
 interface KnowledgeInfoData {
   currentWorkspaceId?: string
   workspaces?: Array<{
-    id: string
-    name: string
+    workspaceId: string
+    workspaceName: string
+    workspaceType?: string
+    description?: string
+    llmPath?: string
     categories: Array<{
       categoryId: string
       categoryName: string
@@ -33,6 +28,12 @@ interface KnowledgeInfoData {
     }>
   }>
   permissions?: Record<string, string[]>
+}
+
+interface DecodedUserInfo {
+  userId: number
+  userName: string
+  tenantId: string
 }
 
 // -- In-memory cache with 5-minute TTL --
@@ -49,69 +50,91 @@ function cacheKey(token: string): string {
   return String(hash)
 }
 
-// -- API calls --
+// -- JWT helpers --
 
-function callGetInfo(
-  httpClient: HttpClient.HttpClient,
-  baseUrl: string,
-  token: string,
-  clientId?: string,
-): Effect.Effect<UserInfoData, UnauthorizedError> {
-  return Effect.gen(function* () {
-    const headers: Record<string, string> = {}
-    if (clientId) {
-      headers["clientid"] = clientId
-    }
-
-    const response = yield* httpClient.execute(
-      HttpClientRequest.get(`${baseUrl}/system/user/getInfo`).pipe(
-        HttpClientRequest.bearerToken(token),
-        HttpClientRequest.setHeaders(headers),
-        HttpClientRequest.acceptJson,
-      ),
-    )
-
-    const body = (yield* response.json) as unknown as ApiResponse<UserInfoData>
-
-    if (body.code !== 200) {
-      return yield* new UnauthorizedError({ message: body.msg ?? "Authentication failed" })
-    }
-    if (!body.data) {
-      return yield* new UnauthorizedError({ message: "Authentication failed: no user data" })
-    }
-
-    return body.data
-  }).pipe(
-    Effect.mapError((error) => {
-      if (error instanceof UnauthorizedError) return error
-      return new UnauthorizedError({ message: "HTTP request failed" })
-    }),
-  )
+function decodeClientIdFromToken(token: string): string | undefined {
+  try {
+    const parts = token.split(".")
+    if (parts.length !== 3) return undefined
+    // JWT uses base64url → convert to standard base64 + fix padding
+    let base64 = parts[1]!.replace(/-/g, "+").replace(/_/g, "/")
+    while (base64.length % 4) base64 += "="
+    const payload = JSON.parse(Buffer.from(base64, "base64").toString())
+    return payload.clientid ?? payload.clientId
+  } catch {
+    return undefined
+  }
 }
+
+// Decode user info from the JWT payload directly — the business system's
+// JWT already carries userId, userName, and tenantId in its claims, so we
+// skip calling the getInfo API (which requires a Sa-Token session the JWT
+// can't satisfy).
+function decodeUserInfoFromToken(token: string): DecodedUserInfo | undefined {
+  try {
+    const parts = token.split(".")
+    if (parts.length !== 3) return undefined
+    let base64 = parts[1]!.replace(/-/g, "+").replace(/_/g, "/")
+    while (base64.length % 4) base64 += "="
+    const payload = JSON.parse(Buffer.from(base64, "base64").toString())
+    if (payload.userId && payload.userName) {
+      return {
+        userId: payload.userId,
+        userName: payload.userName,
+        tenantId: payload.tenantId ?? "000000",
+      }
+    }
+    return undefined
+  } catch {
+    return undefined
+  }
+}
+
+// -- API calls --
 
 function callGetKnowledge(
   httpClient: HttpClient.HttpClient,
   baseUrl: string,
   token: string,
+  clientId?: string,
 ): Effect.Effect<KnowledgeInfoData> {
   return Effect.gen(function* () {
-    const response = yield* httpClient.execute(
-      HttpClientRequest.get(`${baseUrl}/system/user/getKnowledge`).pipe(
-        HttpClientRequest.bearerToken(token),
-        HttpClientRequest.acceptJson,
-      ),
-    )
+    const headers: Record<string, string> = {}
+    if (clientId) {
+      headers["Clientid"] = clientId
+    }
+
+    const apiUrl = `${baseUrl.trim()}/system/user/getKnowledge`
+    console.log("[knowledge-adapter] 调业务API:", apiUrl)
+    console.log("[knowledge-adapter] token前20字符:", token.substring(0, 20) + "...")
+
+    const response =
+      yield *
+      httpClient.execute(
+        HttpClientRequest.get(apiUrl).pipe(
+          HttpClientRequest.setHeader("Authorization", "Bearer " + token),
+          HttpClientRequest.setHeaders(headers),
+          HttpClientRequest.acceptJson,
+        ),
+      )
 
     const body = (yield* response.json) as unknown as ApiResponse<KnowledgeInfoData>
+    console.log(
+      "[knowledge-adapter] 业务API响应:",
+      JSON.stringify({ code: body.code, workspaces: body.data?.workspaces?.length ?? 0 }),
+    )
 
     if (body.code !== 200) {
+      console.log("[knowledge-adapter] 业务API返回非200:", JSON.stringify(body))
       return { workspaces: [], permissions: {} }
     }
 
     return body.data ?? { workspaces: [], permissions: {} }
   }).pipe(
     Effect.option,
-    Effect.map((maybe) => maybe._tag === "Some" ? maybe.value : { workspaces: [], permissions: {} } as KnowledgeInfoData),
+    Effect.map((maybe) =>
+      maybe._tag === "Some" ? maybe.value : ({ workspaces: [], permissions: {} } as KnowledgeInfoData),
+    ),
   )
 }
 
@@ -123,7 +146,7 @@ export const KnowledgeAdapterLayer = Layer.effect(
     const config = yield* ExternalAuthConfig
     const httpClient = yield* HttpClient.HttpClient
 
-    const authenticate = (token: string, clientId?: string) =>
+    const authenticate: ExternalIdentityAdapter["authenticate"] = (token, clientId?) =>
       Effect.gen(function* () {
         // Check cache
         const key = cacheKey(token)
@@ -132,20 +155,42 @@ export const KnowledgeAdapterLayer = Layer.effect(
           return cached.identity
         }
 
-        // Fetch identity and knowledge info in parallel
-        const [userInfo, knowledgeInfo] = yield* Effect.all(
-          [
-            callGetInfo(httpClient, config.apiBaseUrl, token, clientId),
-            callGetKnowledge(httpClient, config.apiBaseUrl, token),
-          ],
-          { concurrency: 2 },
+        // Decode user info from JWT payload directly (no backend API call)
+        const decoded = decodeUserInfoFromToken(token)
+        if (!decoded) {
+          return ExternalIdentityInfo.make({
+            userId: "",
+            nickName: "",
+            tenantId: "000000",
+            workspaces: [],
+            permissions: {},
+          })
+        }
+
+        // Try fetching workspaces from business system; callGetKnowledge already
+        // handles all errors internally (Effect.option → empty on failure).
+        const resolvedClientId = clientId ?? decodeClientIdFromToken(token)
+        const knowledgeInfo = yield* callGetKnowledge(
+          httpClient, config.apiBaseUrl, token, resolvedClientId,
         )
 
         const identity = ExternalIdentityInfo.make({
-          userId: String(userInfo.user.userId),
-          nickName: userInfo.user.nickName,
-          tenantId: userInfo.user.tenantId ?? "000000",
-          workspaces: knowledgeInfo.workspaces ?? [],
+          userId: String(decoded.userId),
+          nickName: decoded.userName,
+          tenantId: decoded.tenantId,
+          workspaces: (knowledgeInfo.workspaces ?? []).map((w) => ({
+            workspaceId: w.workspaceId,
+            workspaceName: w.workspaceName,
+            workspaceType: w.workspaceType ?? undefined,
+            description: w.description ?? undefined,
+            llmPath: w.llmPath ?? undefined,
+            categories: (w.categories ?? []).map((c) => ({
+              categoryId: c.categoryId,
+              categoryName: c.categoryName,
+              parentId: c.parentId ?? undefined,
+              sort: c.sort,
+            })),
+          })),
           permissions: knowledgeInfo.permissions ?? {},
         })
 

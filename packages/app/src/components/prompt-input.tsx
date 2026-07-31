@@ -1541,7 +1541,13 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
 
   const designPlaceholder = () => {
     if (store.mode === "shell") return placeholder()
-    return "Ask anything, / for commands, @ for context..."
+    return promptPlaceholder({
+      mode: "normal",
+      commentCount: 0,
+      example: suggest() ? language.t(EXAMPLES[store.placeholder]) : "",
+      suggest: suggest(),
+      t: (key, params) => language.t(key as Parameters<typeof language.t>[0], params as never),
+    })
   }
 
   const modelControlState = createMemo<ComposerModelControlState>(() => ({

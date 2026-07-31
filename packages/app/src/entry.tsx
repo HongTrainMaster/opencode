@@ -101,6 +101,8 @@ if (!(root instanceof HTMLElement) && import.meta.env.DEV) {
 
 const getCurrentUrl = () => {
   if (location.hostname.includes("opencode.ai")) return "http://localhost:4096"
+  // 通过 nginx 代理时（如 knowledge iframe），API 走同源避免 CORS
+  if (location.pathname.startsWith("/knowledge")) return location.origin
   if (import.meta.env.DEV)
     return `http://${import.meta.env.VITE_OPENCODE_SERVER_HOST ?? "localhost"}:${import.meta.env.VITE_OPENCODE_SERVER_PORT ?? "4096"}`
   return location.origin

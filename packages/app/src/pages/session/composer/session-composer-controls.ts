@@ -17,6 +17,7 @@ import { useSync } from "@/context/sync"
 import { useTabs } from "@/context/tabs"
 import { useProviders } from "@/hooks/use-providers"
 import { pathKey } from "@/utils/path-key"
+import { getFilename } from "@opencode-ai/core/util/path"
 
 export function createPromptInputController(input: {
   sessionKey: Accessor<string>
@@ -71,16 +72,26 @@ export function createPromptProjectControls() {
   const projectServer = () => serverSDK().server
   const projectServerCtx = createMemo(() => global.ensureServerCtx(projectServer()))
   const projects = createMemo(() => {
-    if (server.list.length <= 1) {
-      return search.draftId ? projectServerCtx().projects.list() : layout.projects.list()
+    let list = search.draftId
+      ? (server.list.length <= 1
+          ? projectServerCtx().projects.list()
+          : server.list.flatMap((conn) => {
+              const item = { key: ServerConnection.key(conn), name: serverName(conn) }
+              return global
+                .ensureServerCtx(conn)
+                .projects.list()
+                .map((project) => ({ ...project, server: item }))
+            }))
+      : layout.projects.list()
+
+    // If the draft directory is not in the project list, add a virtual project
+    // so the new-session dialog always shows the current directory as a project.
+    const dir = sdk().directory
+    if (search.draftId && dir && !list.some((p) => p.worktree === dir)) {
+      list = [{ worktree: dir, name: getFilename(dir) }, ...list]
     }
-    return server.list.flatMap((conn) => {
-      const item = { key: ServerConnection.key(conn), name: serverName(conn) }
-      return global
-        .ensureServerCtx(conn)
-        .projects.list()
-        .map((project) => ({ ...project, server: item }))
-    })
+
+    return list
   })
   const selectProject = (worktree: string, serverKey?: string) => {
     const conn = serverKey ? server.list.find((conn) => ServerConnection.key(conn) === serverKey) : projectServer()

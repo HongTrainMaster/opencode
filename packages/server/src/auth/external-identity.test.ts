@@ -9,7 +9,7 @@ describe("ExternalIdentity", () => {
       nickName: "管理员",
       tenantId: "000000",
       workspaces: [
-        { id: "kb_001", name: "产品知识库", categories: [] },
+        { workspaceId: "kb_001", workspaceName: "产品知识库", categories: [] },
       ],
       permissions: { kb_001: ["read", "write"] },
     })
@@ -17,7 +17,7 @@ describe("ExternalIdentity", () => {
     expect(info.tenantId).toBe("000000")
     expect(info.nickName).toBe("管理员")
     expect(info.workspaces).toHaveLength(1)
-    expect(info.workspaces[0].id).toBe("kb_001")
+    expect(info.workspaces[0].workspaceId).toBe("kb_001")
     expect(info.permissions["kb_001"]).toEqual(["read", "write"])
   })
 
@@ -39,8 +39,8 @@ describe("ExternalIdentity", () => {
       nickName: "multi",
       tenantId: "tenant_01",
       workspaces: [
-        { id: "ws_1", name: "知识库A", categories: [{ categoryId: "cat_1", categoryName: "文档", parentId: undefined, sort: 1 }] },
-        { id: "ws_2", name: "知识库B", categories: [] },
+        { workspaceId: "ws_1", workspaceName: "知识库A", categories: [{ categoryId: "cat_1", categoryName: "文档", parentId: undefined, sort: 1 }] },
+        { workspaceId: "ws_2", workspaceName: "知识库B", categories: [] },
       ],
       permissions: { ws_1: ["read", "write", "admin"], ws_2: ["read"] },
     })
