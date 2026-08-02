@@ -47,6 +47,8 @@ models-selector.png
 start-server.cmd
 start.ps1
 .opencode/skills/deploy/
+.opencode/skills/opencode-comm/
+docs/deploy-todo.md
 
 # Generated video/media output
 artifacts/**/out/*.mp4

@@ -112,9 +112,8 @@ function callGetKnowledge(
       yield *
       httpClient.execute(
         HttpClientRequest.get(apiUrl).pipe(
-          // Sa-Token 侧不识别 Bearer 前缀，直接传原始 JWT；
-          // 业务系统 getKnowledge 通过 !startsWith("Bearer ") 分支解析 JWT 并注册会话
-          HttpClientRequest.setHeader("Authorization", token),
+          // 业务系统 getKnowledge 要求 Authorization 头携带 Bearer 前缀的 JWT
+          HttpClientRequest.setHeader("Authorization", "Bearer " + token),
           HttpClientRequest.setHeaders(headers),
           HttpClientRequest.acceptJson,
         ),
