@@ -5,7 +5,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { SummaryWriter, sanitizeDocumentId } from "./summary-writer"
 
-const run = <A>(effect: Effect.Effect<A, never, SummaryWriter>, dir: string) =>
+const run = <A>(effect: Effect.Effect<A, Error, SummaryWriter>, dir: string) =>
   Effect.runPromise(effect.pipe(Effect.provide(SummaryWriter.test(dir))))
 
 describe("sanitizeDocumentId", () => {

@@ -8,8 +8,8 @@ export interface SummaryWriterShape {
     documentId: string
     title: string
     markdown: string
-  }) => Effect.Effect<void>
-  readonly delete: (args: { workspaceLlmPath: string; documentId: string }) => Effect.Effect<void>
+  }) => Effect.Effect<void, Error>
+  readonly delete: (args: { workspaceLlmPath: string; documentId: string }) => Effect.Effect<void, Error>
 }
 
 export class SummaryWriter extends Context.Service<SummaryWriter, SummaryWriterShape>()(
@@ -57,7 +57,7 @@ function makeWriter(rootOverride: string | null): SummaryWriterShape {
   // whatever workspaceLlmPath the caller supplies.
   const resolveRoot = (workspaceLlmPath: string): string => rootOverride ?? workspaceLlmPath
 
-  const ensureSchema = (workspaceLlmPath: string): Effect.Effect<void> => {
+  const ensureSchema = (workspaceLlmPath: string): Effect.Effect<void, Error> => {
     const root = resolveRoot(workspaceLlmPath)
     return Effect.tryPromise({
       try: async () => {
@@ -69,7 +69,7 @@ function makeWriter(rootOverride: string | null): SummaryWriterShape {
         }
       },
       catch: (error) => {
-        throw new Error(`failed to ensure wiki schema: ${String(error)}`)
+        return new Error(`failed to ensure wiki schema: ${String(error)}`)
       },
     })
   }
@@ -89,7 +89,7 @@ function makeWriter(rootOverride: string | null): SummaryWriterShape {
             await writeFile(join(sourcesDir, `${safeId}.md`), content, "utf-8")
           },
           catch: (error) => {
-            throw new Error(`failed to write summary: ${String(error)}`)
+            return new Error(`failed to write summary: ${String(error)}`)
           },
         })
       }),
@@ -109,7 +109,7 @@ function makeWriter(rootOverride: string | null): SummaryWriterShape {
             }
           },
           catch: (error) => {
-            throw new Error(`failed to delete summary: ${String(error)}`)
+            return new Error(`failed to delete summary: ${String(error)}`)
           },
         })
       }),
