@@ -44,14 +44,14 @@ export class EntityExtractor extends Context.Service<
                   ),
                 ),
               )
-              .pipe(Effect.catchAll(() => Effect.succeed(null)))
+              .pipe(Effect.catch(() => Effect.succeed(null)))
             if (!response || response.status !== 200) return heuristicExtract(args.text)
-            const body = (yield* Effect.catchAll(response.json, () => Effect.succeed(null))) as
+            const body = (yield* Effect.catch(response.json, () => Effect.succeed(null))) as
               | { choices?: Array<{ message?: { content?: string } }> }
               | null
             const content = body?.choices?.[0]?.message?.content
             if (!content) return heuristicExtract(args.text)
-            return yield* parseLlmOutput(content).pipe(Effect.catchAll(() => Effect.succeed(heuristicExtract(args.text))))
+            return yield* parseLlmOutput(content).pipe(Effect.catch(() => Effect.succeed(heuristicExtract(args.text))))
           }),
       })
     }),
