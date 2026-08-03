@@ -29,12 +29,13 @@ export const KnowledgeGraphHandler = HttpApiBuilder.group(
           Effect.fn(function* (ctx: any) {
             const identity = yield* ExternalIdentity
             if (!identity.userId) return HttpServerResponse.empty({ status: 401 })
-            // NumberFromString 解析出的 hops 是 number，store 签名要求 1|2，此处收敛
-            const hops = (ctx.query.hops as 1 | 2 | undefined) ?? 1
+            // NumberFromString 解析出的 hops 是 number；仅允许 1|2，否则 400
+            const rawHops = ctx.query.hops ?? 1
+            if (rawHops !== 1 && rawHops !== 2) return HttpServerResponse.empty({ status: 400 })
             const data = yield* store.listRelationsForEntity({
               entityId: ctx.query.entityId,
               userId: identity.userId,
-              hops,
+              hops: rawHops as 1 | 2,
             })
             return { data }
           }),

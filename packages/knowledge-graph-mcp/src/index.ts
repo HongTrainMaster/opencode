@@ -43,7 +43,8 @@ function entityRelations(args: { entity_id: string; hops?: number }) {
       .prepare(
         `SELECT id, head_entity_id AS head, tail_entity_id AS tail, relation_type AS relation, confidence
          FROM kg_relation
-         WHERE (head_entity_id IN (${ph}) OR tail_entity_id IN (${ph}))`,
+         WHERE (head_entity_id IN (${ph}) OR tail_entity_id IN (${ph}))
+           AND scope = 'PUBLIC'`,
       )
       .all(...bindings) as Array<Record<string, unknown>>
   }

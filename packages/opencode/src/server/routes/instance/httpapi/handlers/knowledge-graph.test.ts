@@ -158,6 +158,26 @@ describe("Knowledge Graph HttpApi", () => {
     }),
   )
 
+  it.live("returns 400 for invalid hops value", () =>
+    Effect.gen(function* () {
+      const store = yield* KnowledgeGraphStore
+      yield* store.replaceDocumentGraph({
+        workspaceId: "ws_1",
+        documentId: "10001",
+        scope: "PUBLIC",
+        ownerId: "",
+        entities: [{ name: "A", type: "概念" }],
+        relations: [],
+      })
+      const entities = yield* store.listEntitiesByDocument({ documentId: "10001", userId: "user_1" })
+      const a = entities.find((e) => e.name === "A")!
+      const response = yield* HttpClientRequest.get(
+        `/serve/api/graph/relations?entityId=${a.id}&hops=3`,
+      ).pipe(HttpClient.execute)
+      expect(response.status).toBe(400)
+    }),
+  )
+
   it.live("gets entity detail for an owned PRIVATE entity", () =>
     Effect.gen(function* () {
       const store = yield* KnowledgeGraphStore
