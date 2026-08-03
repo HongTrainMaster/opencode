@@ -1,7 +1,7 @@
 import { describe, expect } from "bun:test"
 import { NodeHttpServer, NodeServices } from "@effect/platform-node"
 import { Context, DateTime, Effect, Layer } from "effect"
-import { HttpClient, HttpClientRequest, HttpBody, HttpRouter } from "effect/unstable/http"
+import { HttpBody, HttpClient, HttpClientRequest, HttpRouter } from "effect/unstable/http"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
 import { ExternalAuth } from "@opencode-ai/server/middleware/external-auth"
 import { ExternalIdentity, ExternalIdentityInfo } from "@opencode-ai/server/auth/external-identity"
@@ -18,22 +18,8 @@ import { EntityExtractor } from "@/knowledge/entity-extractor"
 import { IngestService } from "@/knowledge/ingest"
 import { testEffect } from "@test/lib/effect"
 
-// ---------------------------------------------------------------------------
-// Mock data
-// ---------------------------------------------------------------------------
-
+// ---- mock session（从 knowledge.test.ts 复刻）----
 const now = DateTime.makeUnsafe(Date.now())
-
-const testIdentity = ExternalIdentityInfo.make({
-  userId: "user_1",
-  nickName: "Test User",
-  tenantId: "tenant_01",
-  workspaces: [
-    { workspaceId: "ws_1", workspaceName: "Workspace 1", categories: [] },
-  ],
-  permissions: {},
-})
-
 const mockSessionOwned = SessionSchema.Info.make({
   id: SessionV2.ID.make("ses_owned"),
   projectID: ProjectV2.ID.make("prj_test"),
@@ -44,31 +30,14 @@ const mockSessionOwned = SessionSchema.Info.make({
   location: { directory: AbsolutePath.make("/virtual/test") },
   metadata: { externalUserId: "user_1", externalTenantId: "tenant_01" },
 })
-
-const mockSessionOther = SessionSchema.Info.make({
-  id: SessionV2.ID.make("ses_other"),
-  projectID: ProjectV2.ID.make("prj_test"),
-  title: "Other Session",
-  cost: 0,
-  tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
-  time: { created: now, updated: now },
-  location: { directory: AbsolutePath.make("/virtual/test") },
-  metadata: { externalUserId: "user_2", externalTenantId: "tenant_02" },
-})
-
-// ---------------------------------------------------------------------------
-// Mock layers
-// ---------------------------------------------------------------------------
-
 const mockSessionLayer = Layer.succeed(
   SessionV2.Service,
   SessionV2.Service.of({
-    list: () => Effect.succeed([mockSessionOwned, mockSessionOther]),
-    get: (id) => {
-      if (id === "ses_owned") return Effect.succeed(mockSessionOwned)
-      if (id === "ses_other") return Effect.succeed(mockSessionOther)
-      return Effect.fail(new SessionV2.NotFoundError({ sessionID: id }))
-    },
+    list: () => Effect.succeed([mockSessionOwned]),
+    get: (id) =>
+      id === "ses_owned"
+        ? Effect.succeed(mockSessionOwned)
+        : Effect.fail(new SessionV2.NotFoundError({ sessionID: id })),
     create: () => Effect.succeed(mockSessionOwned),
     messages: () => Effect.die("not implemented") as any,
     message: () => Effect.die("not implemented") as any,
@@ -93,25 +62,30 @@ const mockSessionLayer = Layer.succeed(
   }),
 )
 
-const mockExternalAuthLayer = Layer.succeed(
-  ExternalAuth,
-  ExternalAuth.of((effect: any) => effect),
-)
+// ---- 身份 ----
+const testIdentity = ExternalIdentityInfo.make({
+  userId: "user_1",
+  nickName: "Test User",
+  tenantId: "tenant_01",
+  workspaces: [{ workspaceId: "ws_1", workspaceName: "Workspace 1", categories: [] }],
+  permissions: {},
+})
+const mockExternalAuthLayer = Layer.succeed(ExternalAuth, ExternalAuth.of((effect: any) => effect))
+const mockIdentityLayer = Layer.succeed(ExternalIdentity, testIdentity)
 
-const mockIdentityLayer = Layer.succeed(
-  ExternalIdentity,
-  testIdentity,
-)
-
-// ---------------------------------------------------------------------------
-// Build the HTTP layer
-// ---------------------------------------------------------------------------
-
+// ---- 共享 store 实例：handler 与测试体解析到同一个 KnowledgeGraphStore ----
 const graphStoreLayer = KnowledgeGraphStore.test(":memory:")
 const extractorLayer = EntityExtractor.test(({ title }) =>
-  Effect.succeed({ entities: [{ name: title, type: "文档" }], relations: [] }),
+  Effect.succeed({
+    entities: [
+      { name: title, type: "文档" },
+      { name: "人力资源部", type: "角色" },
+    ],
+    relations: [{ head: title, tail: "人力资源部", relation: "负责" }],
+  }),
 )
 
+// ---- 组装 KnowledgeApi（session + ingest 两个 group）----
 const apiLayer = HttpRouter.serve(
   HttpApiBuilder.layer(KnowledgeApi).pipe(
     Layer.provide(KnowledgeSessionHandler),
@@ -123,9 +97,7 @@ const apiLayer = HttpRouter.serve(
       ),
     ),
     Layer.provide([schemaErrorLayer, mockExternalAuthLayer]),
-    HttpRouter.provideRequest(
-      Layer.succeedContext(Context.empty() as Context.Context<never>),
-    ),
+    HttpRouter.provideRequest(Layer.succeedContext(Context.empty() as Context.Context<never>)),
   ),
   { disableListenLog: true, disableLogger: true },
 ).pipe(
@@ -136,51 +108,79 @@ const apiLayer = HttpRouter.serve(
   Layer.provide(mockSessionLayer),
   Layer.provide(mockIdentityLayer),
 )
-
 const it = testEffect(apiLayer)
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
-describe("Knowledge HttpApi", () => {
-  it.live("lists sessions filtered by user ownership", () =>
+describe("Knowledge Ingest HttpApi", () => {
+  it.live("ingests a document via POST /serve/api/ingest", () =>
     Effect.gen(function* () {
-      const response = yield* HttpClientRequest.get(
-        "/serve/api/sessions?workspaceId=ws_1",
-      ).pipe(HttpClient.execute)
+      const response = yield* HttpClientRequest.post("/serve/api/ingest").pipe(
+        HttpClientRequest.setBody(
+          HttpBody.jsonUnsafe({
+            workspaceId: "ws_1",
+            documents: [
+              {
+                documentId: "10001",
+                title: "考勤制度",
+                format: "txt",
+                operation: "CREATE",
+                fileContent: Buffer.from("第一章 考勤制度 人力资源部 负责 考勤 管理").toString("base64"),
+              },
+            ],
+          }),
+        ),
+        HttpClient.execute,
+      )
       expect(response.status).toBe(200)
       const body = (yield* response.json) as any
-      // Should only include sessions owned by the test user
+      expect(body.code).toBe(200)
       expect(body.data).toHaveLength(1)
-      expect(body.data[0].id).toBe("ses_owned")
+      expect(body.data[0].documentId).toBe("10001")
+      expect(body.data[0].status).toBe("SUCCESS")
+      expect(body.data[0].entities).toBe(2)
+      expect(body.data[0].relations).toBe(1)
     }),
   )
 
-  it.live("creates a knowledge session with metadata", () =>
+  it.live("returns 403 for a workspace the user cannot access", () =>
     Effect.gen(function* () {
-      const response = yield* HttpClientRequest.post("/serve/api/sessions")
-        .pipe(
-          HttpClientRequest.setBody(
-            HttpBody.jsonUnsafe({ workspaceId: "ws_1" }),
-          ),
-          HttpClient.execute,
-        )
-      expect(response.status).toBe(200)
-      const body = (yield* response.json) as any
-      expect(body.data.id).toBe("ses_owned")
+      const response = yield* HttpClientRequest.post("/serve/api/ingest").pipe(
+        HttpClientRequest.setBody(
+          HttpBody.jsonUnsafe({
+            workspaceId: "kb_forbidden",
+            documents: [{ documentId: "1", title: "x", operation: "DELETE" }],
+          }),
+        ),
+        HttpClient.execute,
+      )
+      expect(response.status).toBe(403)
     }),
   )
 
-  it.live("lists workspaces from the identity", () =>
+  it.live("ingest DELETE removes existing graph", () =>
     Effect.gen(function* () {
-      const response = yield* HttpClientRequest.get(
-        "/serve/api/workspaces",
-      ).pipe(HttpClient.execute)
+      const store = yield* KnowledgeGraphStore
+      yield* store.replaceDocumentGraph({
+        workspaceId: "ws_1",
+        documentId: "10001",
+        scope: "PUBLIC",
+        ownerId: "",
+        entities: [{ name: "旧制度", type: "制度" }],
+        relations: [],
+      })
+      const response = yield* HttpClientRequest.post("/serve/api/ingest").pipe(
+        HttpClientRequest.setBody(
+          HttpBody.jsonUnsafe({
+            workspaceId: "ws_1",
+            documents: [{ documentId: "10001", title: "旧制度", operation: "DELETE" }],
+          }),
+        ),
+        HttpClient.execute,
+      )
       expect(response.status).toBe(200)
       const body = (yield* response.json) as any
-      expect(body.data).toHaveLength(1)
-      expect(body.data[0].workspaceId).toBe("ws_1")
+      expect(body.data[0].status).toBe("SUCCESS")
+      const remaining = yield* store.listEntitiesByDocument({ documentId: "10001", userId: "user_1" })
+      expect(remaining).toHaveLength(0)
     }),
   )
 })

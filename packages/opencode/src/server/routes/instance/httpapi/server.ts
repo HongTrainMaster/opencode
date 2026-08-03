@@ -111,6 +111,10 @@ import { externalAuthLayer } from "@opencode-ai/server/middleware/external-auth"
 import { ExternalAuthConfig } from "@opencode-ai/server/auth/external-config"
 import { KnowledgeApi } from "./groups/knowledge"
 import { KnowledgeAdapterLayer } from "@/server/auth/knowledge-adapter"
+import { KnowledgeIngestHandler } from "./handlers/knowledge-ingest"
+import { KnowledgeGraphStore } from "@/knowledge/store"
+import { EntityExtractor } from "@/knowledge/entity-extractor"
+import { IngestService } from "@/knowledge/ingest"
 import { workspaceHandlers } from "./handlers/workspace"
 import { instanceContextLayer } from "./middleware/instance-context"
 import { workspaceRoutingLayer } from "./middleware/workspace-routing"
@@ -286,8 +290,19 @@ export function createRoutes(
     workspaces: [],
     permissions: {},
   })
+  const graphStoreLayer = KnowledgeGraphStore.layer
+  const extractorLayer = EntityExtractor.layer
+
   const knowledgeApiRoutes = HttpApiBuilder.layer(KnowledgeApi).pipe(
     Layer.provide(KnowledgeSessionHandler),
+    Layer.provide(KnowledgeIngestHandler),
+    Layer.provide(
+      IngestService.layer.pipe(
+        Layer.provide(graphStoreLayer),
+        Layer.provide(extractorLayer),
+      ),
+    ),
+    Layer.provideMerge(graphStoreLayer),
     Layer.provide(externalAuthLayer),
     Layer.provide(KnowledgeAdapterLayer),
     Layer.provide(ExternalAuthConfig.layer),
