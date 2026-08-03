@@ -112,6 +112,7 @@ import { ExternalAuthConfig } from "@opencode-ai/server/auth/external-config"
 import { KnowledgeApi } from "./groups/knowledge"
 import { KnowledgeAdapterLayer } from "@/server/auth/knowledge-adapter"
 import { KnowledgeIngestHandler } from "./handlers/knowledge-ingest"
+import { KnowledgeGraphHandler } from "./handlers/knowledge-graph"
 import { KnowledgeGraphStore } from "@/knowledge/store"
 import { EntityExtractor } from "@/knowledge/entity-extractor"
 import { IngestService } from "@/knowledge/ingest"
@@ -296,6 +297,7 @@ export function createRoutes(
   const knowledgeApiRoutes = HttpApiBuilder.layer(KnowledgeApi).pipe(
     Layer.provide(KnowledgeSessionHandler),
     Layer.provide(KnowledgeIngestHandler),
+    Layer.provide(KnowledgeGraphHandler),
     Layer.provide(
       IngestService.layer.pipe(
         Layer.provide(graphStoreLayer),

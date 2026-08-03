@@ -1,7 +1,7 @@
 import { describe, expect } from "bun:test"
 import { NodeHttpServer, NodeServices } from "@effect/platform-node"
 import { Context, DateTime, Effect, Layer } from "effect"
-import { HttpBody, HttpClient, HttpClientRequest, HttpRouter } from "effect/unstable/http"
+import { HttpClient, HttpClientRequest, HttpRouter } from "effect/unstable/http"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
 import { ExternalAuth } from "@opencode-ai/server/middleware/external-auth"
 import { ExternalIdentity, ExternalIdentityInfo } from "@opencode-ai/server/auth/external-identity"
@@ -19,7 +19,7 @@ import { EntityExtractor } from "@/knowledge/entity-extractor"
 import { IngestService } from "@/knowledge/ingest"
 import { testEffect } from "@test/lib/effect"
 
-// ---- mock session（从 knowledge.test.ts 复刻）----
+// ---- mock session（复刻自 knowledge.test.ts）----
 const now = DateTime.makeUnsafe(Date.now())
 const mockSessionOwned = SessionSchema.Info.make({
   id: SessionV2.ID.make("ses_owned"),
@@ -63,7 +63,6 @@ const mockSessionLayer = Layer.succeed(
   }),
 )
 
-// ---- 身份 ----
 const testIdentity = ExternalIdentityInfo.make({
   userId: "user_1",
   nickName: "Test User",
@@ -77,16 +76,9 @@ const mockIdentityLayer = Layer.succeed(ExternalIdentity, testIdentity)
 // ---- 共享 store 实例：handler 与测试体解析到同一个 KnowledgeGraphStore ----
 const graphStoreLayer = KnowledgeGraphStore.test(":memory:")
 const extractorLayer = EntityExtractor.test(({ title }) =>
-  Effect.succeed({
-    entities: [
-      { name: title, type: "文档" },
-      { name: "人力资源部", type: "角色" },
-    ],
-    relations: [{ head: title, tail: "人力资源部", relation: "负责" }],
-  }),
+  Effect.succeed({ entities: [{ name: title, type: "文档" }], relations: [] }),
 )
 
-// ---- 组装 KnowledgeApi（session + ingest 两个 group）----
 const apiLayer = HttpRouter.serve(
   HttpApiBuilder.layer(KnowledgeApi).pipe(
     Layer.provide(KnowledgeSessionHandler),
@@ -112,53 +104,8 @@ const apiLayer = HttpRouter.serve(
 )
 const it = testEffect(apiLayer)
 
-describe("Knowledge Ingest HttpApi", () => {
-  it.live("ingests a document via POST /serve/api/ingest", () =>
-    Effect.gen(function* () {
-      const response = yield* HttpClientRequest.post("/serve/api/ingest").pipe(
-        HttpClientRequest.setBody(
-          HttpBody.jsonUnsafe({
-            workspaceId: "ws_1",
-            documents: [
-              {
-                documentId: "10001",
-                title: "考勤制度",
-                format: "txt",
-                operation: "CREATE",
-                fileContent: Buffer.from("第一章 考勤制度 人力资源部 负责 考勤 管理").toString("base64"),
-              },
-            ],
-          }),
-        ),
-        HttpClient.execute,
-      )
-      expect(response.status).toBe(200)
-      const body = (yield* response.json) as any
-      expect(body.code).toBe(200)
-      expect(body.data).toHaveLength(1)
-      expect(body.data[0].documentId).toBe("10001")
-      expect(body.data[0].status).toBe("SUCCESS")
-      expect(body.data[0].entities).toBe(2)
-      expect(body.data[0].relations).toBe(1)
-    }),
-  )
-
-  it.live("returns 403 for a workspace the user cannot access", () =>
-    Effect.gen(function* () {
-      const response = yield* HttpClientRequest.post("/serve/api/ingest").pipe(
-        HttpClientRequest.setBody(
-          HttpBody.jsonUnsafe({
-            workspaceId: "kb_forbidden",
-            documents: [{ documentId: "1", title: "x", operation: "DELETE" }],
-          }),
-        ),
-        HttpClient.execute,
-      )
-      expect(response.status).toBe(403)
-    }),
-  )
-
-  it.live("ingest DELETE removes existing graph", () =>
+describe("Knowledge Graph HttpApi", () => {
+  it.live("lists entities for a document", () =>
     Effect.gen(function* () {
       const store = yield* KnowledgeGraphStore
       yield* store.replaceDocumentGraph({
@@ -166,23 +113,90 @@ describe("Knowledge Ingest HttpApi", () => {
         documentId: "10001",
         scope: "PUBLIC",
         ownerId: "",
-        entities: [{ name: "旧制度", type: "制度" }],
-        relations: [],
+        entities: [
+          { name: "考勤制度", type: "制度" },
+          { name: "人力资源部", type: "角色" },
+        ],
+        relations: [{ head: "考勤制度", tail: "人力资源部", relation: "负责" }],
       })
-      const response = yield* HttpClientRequest.post("/serve/api/ingest").pipe(
-        HttpClientRequest.setBody(
-          HttpBody.jsonUnsafe({
-            workspaceId: "ws_1",
-            documents: [{ documentId: "10001", title: "旧制度", operation: "DELETE" }],
-          }),
-        ),
+      const response = yield* HttpClientRequest.get("/serve/api/graph/entities?documentId=10001").pipe(
         HttpClient.execute,
       )
       expect(response.status).toBe(200)
       const body = (yield* response.json) as any
-      expect(body.data[0].status).toBe("SUCCESS")
-      const remaining = yield* store.listEntitiesByDocument({ documentId: "10001", userId: "user_1" })
-      expect(remaining).toHaveLength(0)
+      expect(body.data).toHaveLength(2)
+      expect(body.data[0].name).toBeDefined()
+    }),
+  )
+
+  it.live("lists relations for an entity (2 hops)", () =>
+    Effect.gen(function* () {
+      const store = yield* KnowledgeGraphStore
+      yield* store.replaceDocumentGraph({
+        workspaceId: "ws_1",
+        documentId: "10001",
+        scope: "PUBLIC",
+        ownerId: "",
+        entities: [
+          { name: "A", type: "概念" },
+          { name: "B", type: "概念" },
+          { name: "C", type: "概念" },
+        ],
+        relations: [
+          { head: "A", tail: "B", relation: "包含" },
+          { head: "B", tail: "C", relation: "引用" },
+        ],
+      })
+      const entities = yield* store.listEntitiesByDocument({ documentId: "10001", userId: "user_1" })
+      const a = entities.find((e) => e.name === "A")!
+      const response = yield* HttpClientRequest.get(
+        `/serve/api/graph/relations?entityId=${a.id}&hops=2`,
+      ).pipe(HttpClient.execute)
+      expect(response.status).toBe(200)
+      const body = (yield* response.json) as any
+      expect(body.data.map((r: any) => r.relationType).sort()).toEqual(["包含", "引用"])
+    }),
+  )
+
+  it.live("gets entity detail for an owned PRIVATE entity", () =>
+    Effect.gen(function* () {
+      const store = yield* KnowledgeGraphStore
+      yield* store.replaceDocumentGraph({
+        workspaceId: "my_user_1",
+        documentId: "20001",
+        scope: "PRIVATE",
+        ownerId: "user_1",
+        entities: [{ name: "私人笔记", type: "文档" }],
+        relations: [],
+      })
+      const owned = yield* store.listEntitiesByDocument({ documentId: "20001", userId: "user_1" })
+      expect(owned).toHaveLength(1)
+      const detail = yield* HttpClientRequest.get(`/serve/api/graph/entity/${owned[0]!.id}`).pipe(HttpClient.execute)
+      expect(detail.status).toBe(200)
+      const body = (yield* detail.json) as any
+      expect(body.data.name).toBe("私人笔记")
+    }),
+  )
+
+  it.live("returns empty entities for private doc not owned by caller", () =>
+    Effect.gen(function* () {
+      // 调用者身份为 user_1（mockIdentityLayer）；写入 user_2 的私有文档，验证跨用户隔离。
+      // documentId 独立（30002）避免与测试3（20001, my_user_1）在共享 :memory: store 中残留冲突。
+      const store = yield* KnowledgeGraphStore
+      yield* store.replaceDocumentGraph({
+        workspaceId: "my_user_2",
+        documentId: "30002",
+        scope: "PRIVATE",
+        ownerId: "user_2",
+        entities: [{ name: "私人笔记", type: "文档" }],
+        relations: [],
+      })
+      const response = yield* HttpClientRequest.get("/serve/api/graph/entities?documentId=30002").pipe(
+        HttpClient.execute,
+      )
+      expect(response.status).toBe(200)
+      const body = (yield* response.json) as any
+      expect(body.data).toHaveLength(0)
     }),
   )
 })

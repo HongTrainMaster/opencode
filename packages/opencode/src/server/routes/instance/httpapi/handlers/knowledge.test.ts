@@ -13,6 +13,7 @@ import { schemaErrorLayer } from "../middleware/schema-error"
 import { KnowledgeApi } from "../groups/knowledge"
 import { KnowledgeSessionHandler } from "./knowledge"
 import { KnowledgeIngestHandler } from "./knowledge-ingest"
+import { KnowledgeGraphHandler } from "./knowledge-graph"
 import { KnowledgeGraphStore } from "@/knowledge/store"
 import { EntityExtractor } from "@/knowledge/entity-extractor"
 import { IngestService } from "@/knowledge/ingest"
@@ -116,6 +117,7 @@ const apiLayer = HttpRouter.serve(
   HttpApiBuilder.layer(KnowledgeApi).pipe(
     Layer.provide(KnowledgeSessionHandler),
     Layer.provide(KnowledgeIngestHandler),
+    Layer.provide(KnowledgeGraphHandler),
     Layer.provide(
       IngestService.layer.pipe(
         Layer.provide(graphStoreLayer),
