@@ -53,3 +53,135 @@ export const KnowledgeSessionGroup = HttpApiGroup.make("knowledge.session")
       }),
     ),
   )
+
+// ===========================================================================
+// Ingest（契约基准第 4 节；JSON body + base64 fileContent）
+// ===========================================================================
+
+export const IngestOperation = Schema.Union([
+  Schema.Literal("CREATE"),
+  Schema.Literal("UPDATE"),
+  Schema.Literal("DELETE"),
+])
+
+export const IngestDocument = Schema.Struct({
+  documentId: Schema.String,
+  title: Schema.String,
+  categoryId: Schema.optional(Schema.String),
+  llmPath: Schema.optional(Schema.String),
+  secretLevel: Schema.optional(Schema.String),
+  format: Schema.optional(Schema.String),
+  summary: Schema.optional(Schema.String),
+  keywords: Schema.optional(Schema.Array(Schema.String)),
+  operation: IngestOperation,
+  fileContent: Schema.optional(Schema.String),
+})
+
+export const IngestPayload = Schema.Struct({
+  workspaceId: Schema.String,
+  documents: Schema.Array(IngestDocument),
+})
+
+export const IngestResultItem = Schema.Struct({
+  documentId: Schema.String,
+  status: Schema.Union([Schema.Literal("SUCCESS"), Schema.Literal("FAILED")]),
+  entities: Schema.Number,
+  relations: Schema.Number,
+  error: Schema.optional(Schema.String),
+})
+
+export const IngestResponse = Schema.Struct({
+  code: Schema.Number,
+  data: Schema.Array(IngestResultItem),
+})
+
+export const KnowledgeIngestGroup = HttpApiGroup.make("knowledge.ingest").add(
+  HttpApiEndpoint.post("ingest", `${root}/ingest`, {
+    payload: IngestPayload,
+    success: IngestResponse,
+  }).annotateMerge(
+    OpenApi.annotations({
+      identifier: "knowledge.ingest",
+      summary: "Ingest a document into the knowledge graph (CREATE/UPDATE/DELETE)",
+    }),
+  ),
+)
+
+// ===========================================================================
+// Graph query（供主系统转发展示；个人图谱按 owner 隔离）
+// ===========================================================================
+
+export const GraphEntity = Schema.Struct({
+  id: Schema.String,
+  name: Schema.String,
+  type: Schema.String,
+  sourceDocumentId: Schema.String,
+  scope: Schema.String,
+  ownerId: Schema.String,
+  status: Schema.String,
+})
+
+export const GraphRelation = Schema.Struct({
+  id: Schema.String,
+  headEntityId: Schema.String,
+  tailEntityId: Schema.String,
+  relationType: Schema.String,
+  confidence: Schema.Number,
+  source: Schema.String,
+})
+
+export const GraphEntitiesQuery = Schema.Struct({
+  documentId: Schema.String,
+})
+
+export const GraphRelationsQuery = Schema.Struct({
+  entityId: Schema.String,
+  hops: Schema.optional(Schema.NumberFromString),
+})
+
+export const GraphEntityListResponse = Schema.Struct({
+  data: Schema.Array(GraphEntity),
+})
+
+export const GraphRelationListResponse = Schema.Struct({
+  data: Schema.Array(GraphRelation),
+})
+
+export const GraphEntityDetailResponse = Schema.Struct({
+  data: GraphEntity,
+})
+
+export const KnowledgeGraphGroup = HttpApiGroup.make("knowledge.graph")
+  .add(
+    HttpApiEndpoint.get("entities", `${root}/graph/entities`, {
+      query: GraphEntitiesQuery,
+      success: GraphEntityListResponse,
+    }).annotateMerge(
+      OpenApi.annotations({
+        identifier: "knowledge.graph.entities",
+        summary: "List graph entities for a document",
+      }),
+    ),
+  )
+  .add(
+    HttpApiEndpoint.get("relations", `${root}/graph/relations`, {
+      query: GraphRelationsQuery,
+      success: GraphRelationListResponse,
+    }).annotateMerge(
+      OpenApi.annotations({
+        identifier: "knowledge.graph.relations",
+        summary: "List graph relations for an entity (1 or 2 hops)",
+      }),
+    ),
+  )
+  .add(
+    HttpApiEndpoint.get("entity", `${root}/graph/entity/:id`, {
+      params: { id: Schema.String },
+      success: GraphEntityDetailResponse,
+    }).annotateMerge(
+      OpenApi.annotations({
+        identifier: "knowledge.graph.entity",
+        summary: "Get a single graph entity by id",
+      }),
+    ),
+  )
