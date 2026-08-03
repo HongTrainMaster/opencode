@@ -27,7 +27,7 @@ const extractorLayer = EntityExtractor.test(({ title, text }) =>
   }),
 )
 
-const run = <A>(effect: Effect.Effect<A, IngestForbiddenError, IngestService>) =>
+const run = <A>(effect: Effect.Effect<A, IngestForbiddenError, IngestService | KnowledgeGraphStore>) =>
   Effect.runPromise(
     effect.pipe(Effect.provide(IngestService.layer), Effect.provide(extractorLayer), Effect.provide(storeLayer)),
   )

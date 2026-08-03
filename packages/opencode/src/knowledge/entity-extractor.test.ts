@@ -3,7 +3,7 @@ import { Effect } from "effect"
 import { EntityExtractor, heuristicExtract } from "./entity-extractor"
 
 const runWith =
-  (extract: (args: { title: string; text: string }) => Effect.Effect<never, never, never>) =>
+  (extract: (args: { title: string; text: string }) => Effect.Effect<any, never, never>) =>
   (effect: Effect.Effect<any, never, EntityExtractor>) =>
     Effect.runPromise(effect.pipe(Effect.provide(EntityExtractor.test(extract))))
 

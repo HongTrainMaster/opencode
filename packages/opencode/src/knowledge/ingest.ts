@@ -53,7 +53,7 @@ export class IngestService extends Context.Service<IngestService, IngestServiceS
             const scope: "PUBLIC" | "PRIVATE" = args.workspaceId.startsWith("my_") ? "PRIVATE" : "PUBLIC"
             const ownerId = scope === "PRIVATE" ? args.identity.userId : ""
 
-            const ingestOne = (doc: IngestDocumentInput): Effect.Effect<IngestDocumentResult> =>
+            const ingestOne = (doc: IngestDocumentInput): Effect.Effect<IngestDocumentResult, Error> =>
               Effect.gen(function* () {
                 if (doc.operation === "DELETE") {
                   const deleted = yield* store.deleteDocumentGraph({

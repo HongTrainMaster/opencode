@@ -48,7 +48,7 @@ async function makeDocx(text: string): Promise<Uint8Array> {
   return new Uint8Array(await blob.arrayBuffer())
 }
 
-const run = <A>(effect: Effect.Effect<A>) => Effect.runPromise(effect)
+const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect)
 
 describe("doc-parser", () => {
   it("parses txt from base64", async () => {

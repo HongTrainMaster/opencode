@@ -79,13 +79,13 @@ function stripXml(xml: string): string {
 }
 
 async function extractDocxText(buf: Uint8Array): Promise<string> {
-  const blob = new Blob([buf])
+  const blob = new Blob([new Uint8Array(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer)])
   const reader = new ZipReader(new BlobReader(blob))
   try {
     const entries = await reader.getEntries()
     const doc = entries.find((e) => e.filename === "word/document.xml")
     if (!doc) return ""
-    const xml = await doc.getData(new TextWriter())
+    const xml = await doc.getData!(new TextWriter())
     return stripXml(xml)
   } finally {
     await reader.close()
@@ -94,21 +94,24 @@ async function extractDocxText(buf: Uint8Array): Promise<string> {
 
 // --- entrypoint ---
 
-export function parseDocument(args: { format: string; fileContent?: string }): Effect.Effect<ParsedDocument> {
-  return Effect.tryPromise(async () => {
-    const format = (args.format ?? "").toLowerCase().replace(/^\./, "")
-    const content = args.fileContent ?? ""
-    if (!content) return { text: "" }
-    if (["txt", "md", "markdown", "text"].includes(format)) {
-      return { text: decodeText(content) }
-    }
-    if (format === "pdf") {
-      return { text: extractPdfText(decodeBase64(content)) }
-    }
-    if (format === "docx") {
-      return { text: await extractDocxText(decodeBase64(content)) }
-    }
-    // legacy .doc / xlsx / pptx / images: no text extraction in MVP
-    return { text: "" }
+export function parseDocument(args: { format: string; fileContent?: string }): Effect.Effect<ParsedDocument, Error> {
+  return Effect.tryPromise({
+    try: async () => {
+      const format = (args.format ?? "").toLowerCase().replace(/^\./, "")
+      const content = args.fileContent ?? ""
+      if (!content) return { text: "" }
+      if (["txt", "md", "markdown", "text"].includes(format)) {
+        return { text: decodeText(content) }
+      }
+      if (format === "pdf") {
+        return { text: extractPdfText(decodeBase64(content)) }
+      }
+      if (format === "docx") {
+        return { text: await extractDocxText(decodeBase64(content)) }
+      }
+      // legacy .doc / xlsx / pptx / images: no text extraction in MVP
+      return { text: "" }
+    },
+    catch: (error) => (error instanceof Error ? error : new Error(String(error))),
   })
 }

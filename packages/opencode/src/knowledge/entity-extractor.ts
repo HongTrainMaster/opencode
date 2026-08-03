@@ -75,28 +75,31 @@ function truncateText(text: string, max: number): string {
   return text.length <= max ? text : text.slice(0, max)
 }
 
-function parseLlmOutput(content: string): Effect.Effect<ExtractedGraph> {
-  return Effect.try(() => {
-    const data = JSON.parse(content) as {
-      entities?: Array<{ name?: unknown; type?: unknown }>
-      relations?: Array<{ head?: unknown; tail?: unknown; relation?: unknown }>
-    }
-    const entities = (data.entities ?? [])
-      .map((e) => ({
-        name: typeof e.name === "string" ? e.name.trim() : "",
-        type: typeof e.type === "string" ? e.type.trim() : "概念",
-      }))
-      .filter((e) => e.name.length > 0)
-      .slice(0, 50)
-    const nameSet = new Set(entities.map((e) => e.name))
-    const relations = (data.relations ?? [])
-      .map((r) => ({
-        head: typeof r.head === "string" ? r.head.trim() : "",
-        tail: typeof r.tail === "string" ? r.tail.trim() : "",
-        relation: typeof r.relation === "string" ? r.relation.trim() : "",
-      }))
-      .filter((r) => r.head && r.tail && r.relation && nameSet.has(r.head) && nameSet.has(r.tail))
-    return { entities, relations }
+function parseLlmOutput(content: string): Effect.Effect<ExtractedGraph, Error> {
+  return Effect.try({
+    try: () => {
+      const data = JSON.parse(content) as {
+        entities?: Array<{ name?: unknown; type?: unknown }>
+        relations?: Array<{ head?: unknown; tail?: unknown; relation?: unknown }>
+      }
+      const entities = (data.entities ?? [])
+        .map((e) => ({
+          name: typeof e.name === "string" ? e.name.trim() : "",
+          type: typeof e.type === "string" ? e.type.trim() : "概念",
+        }))
+        .filter((e) => e.name.length > 0)
+        .slice(0, 50)
+      const nameSet = new Set(entities.map((e) => e.name))
+      const relations = (data.relations ?? [])
+        .map((r) => ({
+          head: typeof r.head === "string" ? r.head.trim() : "",
+          tail: typeof r.tail === "string" ? r.tail.trim() : "",
+          relation: typeof r.relation === "string" ? r.relation.trim() : "",
+        }))
+        .filter((r) => r.head && r.tail && r.relation && nameSet.has(r.head) && nameSet.has(r.tail))
+      return { entities, relations }
+    },
+    catch: (error) => (error instanceof Error ? error : new Error(String(error))),
   })
 }
 
