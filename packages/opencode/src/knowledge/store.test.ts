@@ -1,0 +1,141 @@
+import { describe, expect, it } from "bun:test"
+import { Effect } from "effect"
+import { createHash } from "node:crypto"
+import { KnowledgeGraphStore } from "./store"
+
+const run = <A>(effect: Effect.Effect<A, never, KnowledgeGraphStore>) =>
+  Effect.runPromise(effect.pipe(Effect.provide(KnowledgeGraphStore.test(":memory:"))))
+
+function entityIdOf(workspaceId: string, documentId: string, type: string, name: string): string {
+  return createHash("sha1").update(`${workspaceId}:${documentId}:${type}:${name}`).digest("hex")
+}
+
+describe("KnowledgeGraphStore", () => {
+  it("replaces document graph and lists entities by document", async () => {
+    const entities = await run(
+      Effect.gen(function* () {
+        const store = yield* KnowledgeGraphStore
+        const result = yield* store.replaceDocumentGraph({
+          workspaceId: "kb_1",
+          documentId: "10001",
+          scope: "PUBLIC",
+          ownerId: "",
+          entities: [
+            { name: "考勤制度", type: "制度" },
+            { name: "人力资源部", type: "角色" },
+          ],
+          relations: [{ head: "考勤制度", tail: "人力资源部", relation: "负责" }],
+        })
+        expect(result.entityCount).toBe(2)
+        expect(result.relationCount).toBe(1)
+        return yield* store.listEntitiesByDocument({ documentId: "10001", userId: "user_1" })
+      }),
+    )
+    expect(entities).toHaveLength(2)
+    expect(entities.map((e) => e.name).sort()).toEqual(["人力资源部", "考勤制度"])
+  })
+
+  it("isolates PRIVATE graph by owner", async () => {
+    await run(
+      Effect.gen(function* () {
+        const store = yield* KnowledgeGraphStore
+        yield* store.replaceDocumentGraph({
+          workspaceId: "my_user_1",
+          documentId: "20001",
+          scope: "PRIVATE",
+          ownerId: "user_1",
+          entities: [{ name: "私人笔记", type: "文档" }],
+          relations: [],
+        })
+        const own = yield* store.listEntitiesByDocument({ documentId: "20001", userId: "user_1" })
+        expect(own).toHaveLength(1)
+        const other = yield* store.listEntitiesByDocument({ documentId: "20001", userId: "user_2" })
+        expect(other).toHaveLength(0)
+        const entity = yield* store.getEntity({
+          entityId: entityIdOf("my_user_1", "20001", "文档", "私人笔记"),
+          userId: "user_2",
+        })
+        expect(entity).toBeUndefined()
+      }),
+    )
+  })
+
+  it("is idempotent: re-ingest overwrites old graph data", async () => {
+    const result = await run(
+      Effect.gen(function* () {
+        const store = yield* KnowledgeGraphStore
+        yield* store.replaceDocumentGraph({
+          workspaceId: "kb_1",
+          documentId: "10001",
+          scope: "PUBLIC",
+          ownerId: "",
+          entities: [{ name: "旧制度", type: "制度" }],
+          relations: [],
+        })
+        yield* store.replaceDocumentGraph({
+          workspaceId: "kb_1",
+          documentId: "10001",
+          scope: "PUBLIC",
+          ownerId: "",
+          entities: [{ name: "新制度", type: "制度" }],
+          relations: [],
+        })
+        return yield* store.listEntitiesByDocument({ documentId: "10001", userId: "user_1" })
+      }),
+    )
+    expect(result).toHaveLength(1)
+    expect(result[0]!.name).toBe("新制度")
+  })
+
+  it("deletes document graph including relations", async () => {
+    const deleted = await run(
+      Effect.gen(function* () {
+        const store = yield* KnowledgeGraphStore
+        yield* store.replaceDocumentGraph({
+          workspaceId: "kb_1",
+          documentId: "10001",
+          scope: "PUBLIC",
+          ownerId: "",
+          entities: [
+            { name: "考勤制度", type: "制度" },
+            { name: "人力资源部", type: "角色" },
+          ],
+          relations: [{ head: "考勤制度", tail: "人力资源部", relation: "负责" }],
+        })
+        const res = yield* store.deleteDocumentGraph({ workspaceId: "kb_1", documentId: "10001" })
+        const remaining = yield* store.listEntitiesByDocument({ documentId: "10001", userId: "user_1" })
+        return { res, remaining }
+      }),
+    )
+    expect(deleted.res.deletedEntities).toBe(2)
+    expect(deleted.res.deletedRelations).toBe(1)
+    expect(deleted.remaining).toHaveLength(0)
+  })
+
+  it("lists 2-hop relations for an entity", async () => {
+    const rels = await run(
+      Effect.gen(function* () {
+        const store = yield* KnowledgeGraphStore
+        yield* store.replaceDocumentGraph({
+          workspaceId: "kb_1",
+          documentId: "10001",
+          scope: "PUBLIC",
+          ownerId: "",
+          entities: [
+            { name: "A", type: "概念" },
+            { name: "B", type: "概念" },
+            { name: "C", type: "概念" },
+          ],
+          relations: [
+            { head: "A", tail: "B", relation: "包含" },
+            { head: "B", tail: "C", relation: "引用" },
+          ],
+        })
+        const entities = yield* store.listEntitiesByDocument({ documentId: "10001", userId: "user_1" })
+        const a = entities.find((e) => e.name === "A")!
+        return yield* store.listRelationsForEntity({ entityId: a.id, userId: "user_1", hops: 2 })
+      }),
+    )
+    expect(rels.map((r) => r.relationType).sort()).toEqual(["包含", "引用"])
+  })
+})
