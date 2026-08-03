@@ -87,6 +87,7 @@ export const IngestResultItem = Schema.Struct({
   status: Schema.Union([Schema.Literal("SUCCESS"), Schema.Literal("FAILED")]),
   entities: Schema.Number,
   relations: Schema.Number,
+  summary: Schema.optional(Schema.Union([Schema.Literal("SUCCESS"), Schema.Literal("SKIPPED")])),
   error: Schema.optional(Schema.String),
 })
 
