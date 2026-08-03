@@ -53,13 +53,18 @@ sources: []
 function makeWriter(rootOverride: string | null): SummaryWriterShape {
   const today = () => new Date().toISOString().slice(0, 10)
 
-  const ensureSchema = (workspaceLlmPath: string): Effect.Effect<void> =>
-    Effect.tryPromise({
+  // A test layer overrides the destination root; the production layer (null) writes to
+  // whatever workspaceLlmPath the caller supplies.
+  const resolveRoot = (workspaceLlmPath: string): string => rootOverride ?? workspaceLlmPath
+
+  const ensureSchema = (workspaceLlmPath: string): Effect.Effect<void> => {
+    const root = resolveRoot(workspaceLlmPath)
+    return Effect.tryPromise({
       try: async () => {
-        const schemaPath = join(workspaceLlmPath, ".wiki-schema.md")
+        const schemaPath = join(root, ".wiki-schema.md")
         const exists = await access(schemaPath).then(() => true).catch(() => false)
         if (!exists) {
-          await mkdir(workspaceLlmPath, { recursive: true })
+          await mkdir(root, { recursive: true })
           await writeFile(schemaPath, MINIMAL_SCHEMA, "utf-8")
         }
       },
@@ -67,13 +72,15 @@ function makeWriter(rootOverride: string | null): SummaryWriterShape {
         throw new Error(`failed to ensure wiki schema: ${String(error)}`)
       },
     })
+  }
 
   return {
     write: ({ workspaceLlmPath, documentId, title, markdown }) =>
       Effect.gen(function* () {
         const safeId = sanitizeDocumentId(documentId)
-        const sourcesDir = join(workspaceLlmPath, "wiki", "sources")
-        yield* ensureSchema(workspaceLlmPath)
+        const root = resolveRoot(workspaceLlmPath)
+        const sourcesDir = join(root, "wiki", "sources")
+        yield* ensureSchema(root)
         const created = today()
         const content = frontmatter(title, created, created) + "\n" + markdown.trim() + "\n"
         yield* Effect.tryPromise({
@@ -90,7 +97,8 @@ function makeWriter(rootOverride: string | null): SummaryWriterShape {
     delete: ({ workspaceLlmPath, documentId }) =>
       Effect.gen(function* () {
         const safeId = sanitizeDocumentId(documentId)
-        const filePath = join(workspaceLlmPath, "wiki", "sources", `${safeId}.md`)
+        const root = resolveRoot(workspaceLlmPath)
+        const filePath = join(root, "wiki", "sources", `${safeId}.md`)
         yield* Effect.tryPromise({
           try: async () => {
             try {

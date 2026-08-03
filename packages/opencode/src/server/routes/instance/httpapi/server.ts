@@ -115,6 +115,8 @@ import { KnowledgeIngestHandler } from "./handlers/knowledge-ingest"
 import { KnowledgeGraphHandler } from "./handlers/knowledge-graph"
 import { KnowledgeGraphStore } from "@/knowledge/store"
 import { EntityExtractor } from "@/knowledge/entity-extractor"
+import { SummaryGenerator } from "@/knowledge/summary-generator"
+import { SummaryWriter } from "@/knowledge/summary-writer"
 import { IngestService } from "@/knowledge/ingest"
 import { workspaceHandlers } from "./handlers/workspace"
 import { instanceContextLayer } from "./middleware/instance-context"
@@ -293,6 +295,8 @@ export function createRoutes(
   })
   const graphStoreLayer = KnowledgeGraphStore.layer
   const extractorLayer = EntityExtractor.layer
+  const summaryGeneratorLayer = SummaryGenerator.layer
+  const summaryWriterLayer = SummaryWriter.layer
 
   const knowledgeApiRoutes = HttpApiBuilder.layer(KnowledgeApi).pipe(
     Layer.provide(KnowledgeSessionHandler),
@@ -302,6 +306,8 @@ export function createRoutes(
       IngestService.layer.pipe(
         Layer.provide(graphStoreLayer),
         Layer.provide(extractorLayer),
+        Layer.provide(summaryGeneratorLayer),
+        Layer.provide(summaryWriterLayer),
       ),
     ),
     Layer.provideMerge(graphStoreLayer),

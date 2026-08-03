@@ -5,8 +5,8 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { SummaryWriter, sanitizeDocumentId } from "./summary-writer"
 
-const run = <A>(effect: Effect.Effect<A, never, SummaryWriter>) =>
-  Effect.runPromise(effect.pipe(Effect.provide(SummaryWriter.test(process.cwd()))))
+const run = <A>(effect: Effect.Effect<A, never, SummaryWriter>, dir: string) =>
+  Effect.runPromise(effect.pipe(Effect.provide(SummaryWriter.test(dir))))
 
 describe("sanitizeDocumentId", () => {
   it("keeps safe chars and strips path separators", () => {
@@ -29,6 +29,7 @@ describe("SummaryWriter", () => {
             markdown: "# 考勤制度\n\n## 核心观点\n\n- 要点一",
           })
         }),
+        dir,
       )
       const page = await readFile(join(dir, "wiki", "sources", "10001.md"), "utf-8")
       expect(page).toContain("title: 考勤制度")
@@ -50,6 +51,7 @@ describe("SummaryWriter", () => {
           yield* writer.write({ workspaceLlmPath: dir, documentId: "1", title: "t", markdown: "# 旧" })
           yield* writer.write({ workspaceLlmPath: dir, documentId: "1", title: "t", markdown: "# 新" })
         }),
+        dir,
       )
       const page = await readFile(join(dir, "wiki", "sources", "1.md"), "utf-8")
       expect(page).toContain("# 新")
@@ -69,6 +71,7 @@ describe("SummaryWriter", () => {
           yield* writer.delete({ workspaceLlmPath: dir, documentId: "1" })
           yield* writer.delete({ workspaceLlmPath: dir, documentId: "2" })
         }),
+        dir,
       )
       const exists = await access(join(dir, "wiki", "sources", "1.md")).then(() => true).catch(() => false)
       expect(exists).toBe(false)
@@ -85,6 +88,7 @@ describe("SummaryWriter", () => {
           const writer = yield* SummaryWriter
           yield* writer.write({ workspaceLlmPath: dir, documentId: "../evil", title: "t", markdown: "# x" })
         }),
+        dir,
       )
       const escaped = await access(join(dir, "evil.md")).then(() => true).catch(() => false)
       expect(escaped).toBe(false)

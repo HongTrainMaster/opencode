@@ -3,6 +3,8 @@ import type { ExternalIdentityInfo } from "@opencode-ai/server/auth/external-ide
 import { parseDocument } from "./doc-parser"
 import { EntityExtractor } from "./entity-extractor"
 import { KnowledgeGraphStore } from "./store"
+import { SummaryGenerator } from "./summary-generator"
+import { SummaryWriter } from "./summary-writer"
 
 export class IngestForbiddenError extends Schema.TaggedErrorClass<IngestForbiddenError>()(
   "IngestForbiddenError",
@@ -27,6 +29,7 @@ export interface IngestDocumentResult {
   status: "SUCCESS" | "FAILED"
   entities: number
   relations: number
+  summary?: "SUCCESS" | "SKIPPED"
   error?: string
 }
 
@@ -46,12 +49,15 @@ export class IngestService extends Context.Service<IngestService, IngestServiceS
     Effect.gen(function* () {
       const store = yield* KnowledgeGraphStore
       const extractor = yield* EntityExtractor
+      const summaryGenerator = yield* SummaryGenerator
+      const summaryWriter = yield* SummaryWriter
       return IngestService.of({
         ingest: (args) =>
           Effect.gen(function* () {
             yield* assertWorkspaceAllowed(args.identity, args.workspaceId)
             const scope: "PUBLIC" | "PRIVATE" = args.workspaceId.startsWith("my_") ? "PRIVATE" : "PUBLIC"
             const ownerId = scope === "PRIVATE" ? args.identity.userId : ""
+            const workspaceLlmPath = args.identity.workspaces.find((w) => w.workspaceId === args.workspaceId)?.llmPath
 
             const ingestOne = (doc: IngestDocumentInput): Effect.Effect<IngestDocumentResult, Error> =>
               Effect.gen(function* () {
@@ -60,11 +66,15 @@ export class IngestService extends Context.Service<IngestService, IngestServiceS
                     workspaceId: args.workspaceId,
                     documentId: doc.documentId,
                   })
+                  if (workspaceLlmPath) {
+                    yield* summaryWriter.delete({ workspaceLlmPath, documentId: doc.documentId })
+                  }
                   return {
                     documentId: doc.documentId,
                     status: "SUCCESS",
                     entities: deleted.deletedEntities,
                     relations: deleted.deletedRelations,
+                    summary: workspaceLlmPath ? "SUCCESS" : "SKIPPED",
                   }
                 }
                 const parsed = yield* parseDocument({ format: doc.format ?? "", fileContent: doc.fileContent })
@@ -77,11 +87,25 @@ export class IngestService extends Context.Service<IngestService, IngestServiceS
                   entities: extracted.entities,
                   relations: extracted.relations,
                 })
+                let summary: "SUCCESS" | "SKIPPED" = "SKIPPED"
+                if (workspaceLlmPath) {
+                  const genResult = yield* summaryGenerator.summarize({ title: doc.title, text: parsed.text })
+                  if (genResult.kind === "success") {
+                    yield* summaryWriter.write({
+                      workspaceLlmPath,
+                      documentId: doc.documentId,
+                      title: doc.title,
+                      markdown: genResult.markdown,
+                    })
+                    summary = "SUCCESS"
+                  }
+                }
                 return {
                   documentId: doc.documentId,
                   status: "SUCCESS",
                   entities: result.entityCount,
                   relations: result.relationCount,
+                  summary,
                 }
               })
 

@@ -16,8 +16,11 @@ import { KnowledgeIngestHandler } from "./knowledge-ingest"
 import { KnowledgeGraphHandler } from "./knowledge-graph"
 import { KnowledgeGraphStore } from "@/knowledge/store"
 import { EntityExtractor } from "@/knowledge/entity-extractor"
+import { SummaryGenerator } from "@/knowledge/summary-generator"
+import { SummaryWriter } from "@/knowledge/summary-writer"
 import { IngestService } from "@/knowledge/ingest"
 import { testEffect } from "@test/lib/effect"
+import { tmpdir } from "node:os"
 
 // ---- mock session（复刻自 knowledge.test.ts）----
 const now = DateTime.makeUnsafe(Date.now())
@@ -78,6 +81,8 @@ const graphStoreLayer = KnowledgeGraphStore.test(":memory:")
 const extractorLayer = EntityExtractor.test(({ title }) =>
   Effect.succeed({ entities: [{ name: title, type: "文档" }], relations: [] }),
 )
+const summaryGeneratorLayer = SummaryGenerator.test(() => Effect.succeed({ kind: "skipped" }))
+const summaryWriterLayer = SummaryWriter.test(tmpdir())
 
 const apiLayer = HttpRouter.serve(
   HttpApiBuilder.layer(KnowledgeApi).pipe(
@@ -88,6 +93,8 @@ const apiLayer = HttpRouter.serve(
       IngestService.layer.pipe(
         Layer.provide(graphStoreLayer),
         Layer.provide(extractorLayer),
+        Layer.provide(summaryGeneratorLayer),
+        Layer.provide(summaryWriterLayer),
       ),
     ),
     Layer.provide([schemaErrorLayer, mockExternalAuthLayer]),

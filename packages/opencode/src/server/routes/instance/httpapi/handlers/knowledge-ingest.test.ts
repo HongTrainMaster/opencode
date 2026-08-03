@@ -16,8 +16,11 @@ import { KnowledgeIngestHandler } from "./knowledge-ingest"
 import { KnowledgeGraphHandler } from "./knowledge-graph"
 import { KnowledgeGraphStore } from "@/knowledge/store"
 import { EntityExtractor } from "@/knowledge/entity-extractor"
+import { SummaryGenerator } from "@/knowledge/summary-generator"
+import { SummaryWriter } from "@/knowledge/summary-writer"
 import { IngestService } from "@/knowledge/ingest"
 import { testEffect } from "@test/lib/effect"
+import { tmpdir } from "node:os"
 
 // ---- mock session（从 knowledge.test.ts 复刻）----
 const now = DateTime.makeUnsafe(Date.now())
@@ -85,6 +88,8 @@ const extractorLayer = EntityExtractor.test(({ title }) =>
     relations: [{ head: title, tail: "人力资源部", relation: "负责" }],
   }),
 )
+const summaryGeneratorLayer = SummaryGenerator.test(() => Effect.succeed({ kind: "skipped" }))
+const summaryWriterLayer = SummaryWriter.test(tmpdir())
 
 // ---- 组装 KnowledgeApi（session + ingest 两个 group）----
 const apiLayer = HttpRouter.serve(
@@ -96,6 +101,8 @@ const apiLayer = HttpRouter.serve(
       IngestService.layer.pipe(
         Layer.provide(graphStoreLayer),
         Layer.provide(extractorLayer),
+        Layer.provide(summaryGeneratorLayer),
+        Layer.provide(summaryWriterLayer),
       ),
     ),
     Layer.provide([schemaErrorLayer, mockExternalAuthLayer]),
