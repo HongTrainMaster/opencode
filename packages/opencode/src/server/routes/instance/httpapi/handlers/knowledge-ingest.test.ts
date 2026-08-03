@@ -71,7 +71,7 @@ const testIdentity = ExternalIdentityInfo.make({
   userId: "user_1",
   nickName: "Test User",
   tenantId: "tenant_01",
-  workspaces: [{ workspaceId: "ws_1", workspaceName: "Workspace 1", categories: [] }],
+  workspaces: [{ workspaceId: "ws_1", workspaceName: "Workspace 1", llmPath: tmpdir(), categories: [] }],
   permissions: {},
 })
 const mockExternalAuthLayer = Layer.succeed(ExternalAuth, ExternalAuth.of((effect: any) => effect))
@@ -88,7 +88,9 @@ const extractorLayer = EntityExtractor.test(({ title }) =>
     relations: [{ head: title, tail: "人力资源部", relation: "负责" }],
   }),
 )
-const summaryGeneratorLayer = SummaryGenerator.test(() => Effect.succeed({ kind: "skipped" }))
+const summaryGeneratorLayer = SummaryGenerator.test(({ title }) =>
+  Effect.succeed({ kind: "success", markdown: `# ${title}\n\n## 核心观点\n\n- 要点` }),
+)
 const summaryWriterLayer = SummaryWriter.test(tmpdir())
 
 // ---- 组装 KnowledgeApi（session + ingest 两个 group）----
@@ -147,6 +149,7 @@ describe("Knowledge Ingest HttpApi", () => {
       expect(body.data[0].status).toBe("SUCCESS")
       expect(body.data[0].entities).toBe(2)
       expect(body.data[0].relations).toBe(1)
+      expect(body.data[0].summary).toBe("SUCCESS")
     }),
   )
 
