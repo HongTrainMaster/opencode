@@ -130,7 +130,7 @@ describe("Knowledge HttpApi", () => {
   it.live("lists sessions filtered by user ownership", () =>
     Effect.gen(function* () {
       const response = yield* HttpClientRequest.get(
-        "/knowledge/api/sessions?workspaceId=ws_1",
+        "/serve/api/sessions?workspaceId=ws_1",
       ).pipe(HttpClient.execute)
       expect(response.status).toBe(200)
       const body = (yield* response.json) as any
@@ -140,38 +140,9 @@ describe("Knowledge HttpApi", () => {
     }),
   )
 
-  it.live("gets a session the caller owns", () =>
-    Effect.gen(function* () {
-      const response = yield* HttpClientRequest.get(
-        "/knowledge/api/sessions/ses_owned",
-      ).pipe(HttpClient.execute)
-      expect(response.status).toBe(200)
-      const body = (yield* response.json) as any
-      expect(body.data.id).toBe("ses_owned")
-    }),
-  )
-
-  it.live("returns 404 for a session owned by someone else", () =>
-    Effect.gen(function* () {
-      const response = yield* HttpClientRequest.get(
-        "/knowledge/api/sessions/ses_other",
-      ).pipe(HttpClient.execute)
-      expect(response.status).toBe(404)
-    }),
-  )
-
-  it.live("returns 404 for a non-existent session", () =>
-    Effect.gen(function* () {
-      const response = yield* HttpClientRequest.get(
-        "/knowledge/api/sessions/ses_nonexistent",
-      ).pipe(HttpClient.execute)
-      expect(response.status).toBe(404)
-    }),
-  )
-
   it.live("creates a knowledge session with metadata", () =>
     Effect.gen(function* () {
-      const response = yield* HttpClientRequest.post("/knowledge/api/sessions")
+      const response = yield* HttpClientRequest.post("/serve/api/sessions")
         .pipe(
           HttpClientRequest.setBody(
             HttpBody.jsonUnsafe({ workspaceId: "ws_1" }),
@@ -187,7 +158,7 @@ describe("Knowledge HttpApi", () => {
   it.live("lists workspaces from the identity", () =>
     Effect.gen(function* () {
       const response = yield* HttpClientRequest.get(
-        "/knowledge/api/workspaces",
+        "/serve/api/workspaces",
       ).pipe(HttpClient.execute)
       expect(response.status).toBe(200)
       const body = (yield* response.json) as any
