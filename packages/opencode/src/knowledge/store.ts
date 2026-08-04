@@ -51,6 +51,8 @@ export interface KnowledgeGraphStoreShape {
   readonly replaceDocumentGraph: (args: ReplaceDocumentGraphArgs) => Effect.Effect<ReplaceDocumentResult>
   readonly deleteDocumentGraph: (args: { workspaceId: string; documentId: string }) => Effect.Effect<DeleteDocumentResult>
   readonly listEntitiesByDocument: (args: { documentId: string; userId: string }) => Effect.Effect<GraphEntity[]>
+  readonly listEntitiesByWorkspace: (args: { workspaceId: string; userId: string }) => Effect.Effect<GraphEntity[]>
+  readonly listRelationsByWorkspace: (args: { workspaceId: string; userId: string }) => Effect.Effect<GraphRelation[]>
   readonly getEntity: (args: { entityId: string; userId: string }) => Effect.Effect<GraphEntity | undefined>
   readonly listRelationsForEntity: (args: {
     entityId: string
@@ -259,6 +261,29 @@ function makeStore(filename: string): KnowledgeGraphStoreShape {
           )
           .all(args.documentId, args.userId) as Array<any>
         return rows.map(rowToEntity)
+      }),
+
+    listEntitiesByWorkspace: (args: { workspaceId: string; userId: string }) =>
+      Effect.sync(() => {
+        const rows = db
+          .prepare(
+            `SELECT * FROM kg_entity
+             WHERE workspace_id = ? AND (scope = 'PUBLIC' OR (scope = 'PRIVATE' AND owner_id = ?))
+             ORDER BY name`,
+          )
+          .all(args.workspaceId, args.userId) as Array<any>
+        return rows.map(rowToEntity)
+      }),
+
+    listRelationsByWorkspace: (args: { workspaceId: string; userId: string }) =>
+      Effect.sync(() => {
+        const rows = db
+          .prepare(
+            `SELECT * FROM kg_relation
+             WHERE workspace_id = ? AND (scope = 'PUBLIC' OR (scope = 'PRIVATE' AND owner_id = ?))`,
+          )
+          .all(args.workspaceId, args.userId) as Array<any>
+        return rows.map(rowToRelation)
       }),
 
     getEntity: (args: { entityId: string; userId: string }) =>

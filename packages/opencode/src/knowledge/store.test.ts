@@ -138,4 +138,88 @@ describe("KnowledgeGraphStore", () => {
     )
     expect(rels.map((r) => r.relationType).sort()).toEqual(["包含", "引用"])
   })
+
+  it("lists all entities in a workspace (excludes other workspaces)", async () => {
+    const entities = await run(
+      Effect.gen(function* () {
+        const store = yield* KnowledgeGraphStore
+        yield* store.replaceDocumentGraph({
+          workspaceId: "kb_1",
+          documentId: "10001",
+          scope: "PUBLIC",
+          ownerId: "",
+          entities: [
+            { name: "考勤制度", type: "制度" },
+            { name: "人力资源部", type: "角色" },
+          ],
+          relations: [{ head: "考勤制度", tail: "人力资源部", relation: "负责" }],
+        })
+        yield* store.replaceDocumentGraph({
+          workspaceId: "kb_2",
+          documentId: "20001",
+          scope: "PUBLIC",
+          ownerId: "",
+          entities: [{ name: "他库实体", type: "概念" }],
+          relations: [],
+        })
+        return yield* store.listEntitiesByWorkspace({ workspaceId: "kb_1", userId: "user_1" })
+      }),
+    )
+    expect(entities).toHaveLength(2)
+    expect(entities.map((e) => e.name).sort()).toEqual(["人力资源部", "考勤制度"])
+  })
+
+  it("lists all relations in a workspace (cross-document edges included)", async () => {
+    const relations = await run(
+      Effect.gen(function* () {
+        const store = yield* KnowledgeGraphStore
+        yield* store.replaceDocumentGraph({
+          workspaceId: "kb_1",
+          documentId: "10001",
+          scope: "PUBLIC",
+          ownerId: "",
+          entities: [
+            { name: "考勤制度", type: "制度" },
+            { name: "人力资源部", type: "角色" },
+          ],
+          relations: [{ head: "考勤制度", tail: "人力资源部", relation: "负责" }],
+        })
+        yield* store.replaceDocumentGraph({
+          workspaceId: "kb_1",
+          documentId: "10002",
+          scope: "PUBLIC",
+          ownerId: "",
+          entities: [
+            { name: "考勤制度", type: "制度" },
+            { name: "请假流程", type: "流程" },
+          ],
+          relations: [{ head: "考勤制度", tail: "请假流程", relation: "包含" }],
+        })
+        return yield* store.listRelationsByWorkspace({ workspaceId: "kb_1", userId: "user_1" })
+      }),
+    )
+    expect(relations).toHaveLength(2)
+  })
+
+  it("isolates PRIVATE workspace relations by owner", async () => {
+    const relations = await run(
+      Effect.gen(function* () {
+        const store = yield* KnowledgeGraphStore
+        yield* store.replaceDocumentGraph({
+          workspaceId: "my_user_1",
+          documentId: "20001",
+          scope: "PRIVATE",
+          ownerId: "user_1",
+          entities: [{ name: "私人笔记", type: "文档" }],
+          relations: [],
+        })
+        const own = yield* store.listEntitiesByWorkspace({ workspaceId: "my_user_1", userId: "user_1" })
+        expect(own).toHaveLength(1)
+        const other = yield* store.listEntitiesByWorkspace({ workspaceId: "my_user_1", userId: "user_2" })
+        expect(other).toHaveLength(0)
+        return yield* store.listRelationsByWorkspace({ workspaceId: "my_user_1", userId: "user_1" })
+      }),
+    )
+    expect(relations).toHaveLength(0)
+  })
 })
