@@ -16,7 +16,7 @@ import { KnowledgeIngestHandler } from "./knowledge-ingest"
 import { KnowledgeGraphHandler } from "./knowledge-graph"
 import { KnowledgeGraphStore } from "@/knowledge/store"
 import { EntityExtractor } from "@/knowledge/entity-extractor"
-import { SummaryGenerator } from "@/knowledge/summary-generator"
+import { WikiSessionService } from "@/knowledge/wiki-session"
 import { SummaryWriter } from "@/knowledge/summary-writer"
 import { IngestService } from "@/knowledge/ingest"
 import { testEffect } from "@test/lib/effect"
@@ -81,7 +81,7 @@ const graphStoreLayer = KnowledgeGraphStore.test(":memory:")
 const extractorLayer = EntityExtractor.test(({ title }) =>
   Effect.succeed({ entities: [{ name: title, type: "文档" }], relations: [] }),
 )
-const summaryGeneratorLayer = SummaryGenerator.test(() => Effect.succeed({ kind: "skipped" }))
+const wikiSessionLayer = WikiSessionService.test(() => Effect.succeed({ status: "SUCCESS" as const }))
 const summaryWriterLayer = SummaryWriter.test(tmpdir())
 
 const apiLayer = HttpRouter.serve(
@@ -93,7 +93,7 @@ const apiLayer = HttpRouter.serve(
       IngestService.layer.pipe(
         Layer.provide(graphStoreLayer),
         Layer.provide(extractorLayer),
-        Layer.provide(summaryGeneratorLayer),
+        Layer.provide(wikiSessionLayer),
         Layer.provide(summaryWriterLayer),
       ),
     ),
@@ -224,6 +224,53 @@ describe("Knowledge Graph HttpApi", () => {
       expect(response.status).toBe(200)
       const body = (yield* response.json) as any
       expect(body.data).toHaveLength(0)
+    }),
+  )
+
+  it.live("lists workspace graph (entities + relations) for a workspace", () =>
+    Effect.gen(function* () {
+      const store = yield* KnowledgeGraphStore
+      yield* store.replaceDocumentGraph({
+        workspaceId: "ws_1",
+        documentId: "10001",
+        scope: "PUBLIC",
+        ownerId: "",
+        entities: [
+          { name: "考勤制度", type: "制度" },
+          { name: "人力资源部", type: "角色" },
+        ],
+        relations: [{ head: "考勤制度", tail: "人力资源部", relation: "负责" }],
+      })
+      const response = yield* HttpClientRequest.get("/serve/api/graph/workspace?workspaceId=ws_1").pipe(
+        HttpClient.execute,
+      )
+      expect(response.status).toBe(200)
+      const body = (yield* response.json) as any
+      expect(body.data.entities).toHaveLength(2)
+      expect(body.data.relations).toHaveLength(1)
+    }),
+  )
+
+  it.live("returns empty workspace graph for a workspace the caller cannot access", () =>
+    Effect.gen(function* () {
+      // 调用者身份为 user_1（mockIdentityLayer）。在 ws_2 写入 user_2 的 PRIVATE 数据，
+      // 验证 workspace 级跨用户隔离：workspace 存在数据但调用者无权可见时必须返回空。
+      const store = yield* KnowledgeGraphStore
+      yield* store.replaceDocumentGraph({
+        workspaceId: "ws_2",
+        documentId: "40001",
+        scope: "PRIVATE",
+        ownerId: "user_2",
+        entities: [{ name: "机密笔记", type: "文档" }],
+        relations: [],
+      })
+      const response = yield* HttpClientRequest.get("/serve/api/graph/workspace?workspaceId=ws_2").pipe(
+        HttpClient.execute,
+      )
+      expect(response.status).toBe(200)
+      const body = (yield* response.json) as any
+      expect(body.data.entities).toHaveLength(0)
+      expect(body.data.relations).toHaveLength(0)
     }),
   )
 })

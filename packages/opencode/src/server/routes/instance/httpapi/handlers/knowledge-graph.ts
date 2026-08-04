@@ -50,5 +50,23 @@ export const KnowledgeGraphHandler = HttpApiBuilder.group(
             return { data }
           }),
         )
+        .handle(
+          "workspace",
+          Effect.fn(function* (ctx: any) {
+            const identity = yield* ExternalIdentity
+            if (!identity.userId) return HttpServerResponse.empty({ status: 401 })
+            const [entities, relations] = yield* Effect.all([
+              store.listEntitiesByWorkspace({
+                workspaceId: ctx.query.workspaceId,
+                userId: identity.userId,
+              }),
+              store.listRelationsByWorkspace({
+                workspaceId: ctx.query.workspaceId,
+                userId: identity.userId,
+              }),
+            ])
+            return { data: { entities, relations } }
+          }),
+        )
     }),
 )
