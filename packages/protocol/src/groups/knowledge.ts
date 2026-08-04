@@ -152,6 +152,17 @@ export const GraphEntityDetailResponse = Schema.Struct({
   data: GraphEntity,
 })
 
+export const GraphWorkspaceQuery = Schema.Struct({
+  workspaceId: Schema.String,
+})
+
+export const GraphWorkspaceResponse = Schema.Struct({
+  data: Schema.Struct({
+    entities: Schema.Array(GraphEntity),
+    relations: Schema.Array(GraphRelation),
+  }),
+})
+
 export const KnowledgeGraphGroup = HttpApiGroup.make("knowledge.graph")
   .add(
     HttpApiEndpoint.get("entities", `${root}/graph/entities`, {
@@ -183,6 +194,17 @@ export const KnowledgeGraphGroup = HttpApiGroup.make("knowledge.graph")
       OpenApi.annotations({
         identifier: "knowledge.graph.entity",
         summary: "Get a single graph entity by id",
+      }),
+    ),
+  )
+  .add(
+    HttpApiEndpoint.get("workspace", `${root}/graph/workspace`, {
+      query: GraphWorkspaceQuery,
+      success: GraphWorkspaceResponse,
+    }).annotateMerge(
+      OpenApi.annotations({
+        identifier: "knowledge.graph.workspace",
+        summary: "List all graph entities and relations for a workspace",
       }),
     ),
   )
