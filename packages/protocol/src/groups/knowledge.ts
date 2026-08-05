@@ -208,3 +208,55 @@ export const KnowledgeGraphGroup = HttpApiGroup.make("knowledge.graph")
       }),
     ),
   )
+
+// ===========================================================================
+// Summary（供主系统查看/编辑 opencode 生成的 AI 摘要 MD）
+// llmPath 由主系统计算后传入；opencode 只做 sanitize + 拼路径 + 读写
+// ===========================================================================
+
+export const SummaryReadQuery = Schema.Struct({
+  llmPath: Schema.String,
+  documentId: Schema.String,
+})
+
+export const SummaryReadResponse = Schema.Struct({
+  exists: Schema.Boolean,
+  content: Schema.optional(Schema.NullOr(Schema.String)),
+})
+
+export const SummaryWritePayload = Schema.Struct({
+  llmPath: Schema.String,
+  documentId: Schema.String,
+  title: Schema.String,
+  markdown: Schema.String,
+})
+
+export const SummaryWriteResponse = Schema.Struct({
+  documentId: Schema.String,
+  status: Schema.Literal("SUCCESS"),
+  error: Schema.optional(Schema.String),
+})
+
+export const KnowledgeSummaryGroup = HttpApiGroup.make("knowledge.summary")
+  .add(
+    HttpApiEndpoint.get("list", `${root}/summary`, {
+      query: SummaryReadQuery,
+      success: SummaryReadResponse,
+    }).annotateMerge(
+      OpenApi.annotations({
+        identifier: "knowledge.summary.list",
+        summary: "Read a document's AI summary source file",
+      }),
+    ),
+  )
+  .add(
+    HttpApiEndpoint.post("write", `${root}/summary`, {
+      payload: SummaryWritePayload,
+      success: SummaryWriteResponse,
+    }).annotateMerge(
+      OpenApi.annotations({
+        identifier: "knowledge.summary.write",
+        summary: "Write (create or overwrite) a document's AI summary source file",
+      }),
+    ),
+  )
