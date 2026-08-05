@@ -113,11 +113,13 @@ import { KnowledgeApi } from "./groups/knowledge"
 import { KnowledgeAdapterLayer } from "@/server/auth/knowledge-adapter"
 import { KnowledgeIngestHandler } from "./handlers/knowledge-ingest"
 import { KnowledgeGraphHandler } from "./handlers/knowledge-graph"
+import { KnowledgeSummaryHandler } from "./handlers/knowledge-summary"
 import { KnowledgeGraphStore } from "@/knowledge/store"
 import { EntityExtractor } from "@/knowledge/entity-extractor"
-import { SummaryGenerator } from "@/knowledge/summary-generator"
 import { SummaryWriter } from "@/knowledge/summary-writer"
+import { WikiSessionService } from "@/knowledge/wiki-session"
 import { IngestService } from "@/knowledge/ingest"
+import { IngestJobService } from "@/knowledge/ingest-job"
 import { workspaceHandlers } from "./handlers/workspace"
 import { instanceContextLayer } from "./middleware/instance-context"
 import { workspaceRoutingLayer } from "./middleware/workspace-routing"
@@ -295,19 +297,26 @@ export function createRoutes(
   })
   const graphStoreLayer = KnowledgeGraphStore.layer
   const extractorLayer = EntityExtractor.layer
-  const summaryGeneratorLayer = SummaryGenerator.layer
   const summaryWriterLayer = SummaryWriter.layer
+  const wikiSessionLayer = WikiSessionService.layer
 
   const knowledgeApiRoutes = HttpApiBuilder.layer(KnowledgeApi).pipe(
     Layer.provide(KnowledgeSessionHandler),
     Layer.provide(KnowledgeIngestHandler),
     Layer.provide(KnowledgeGraphHandler),
+    Layer.provide(KnowledgeSummaryHandler),
+    Layer.provide(summaryWriterLayer),
     Layer.provide(
       IngestService.layer.pipe(
         Layer.provide(graphStoreLayer),
         Layer.provide(extractorLayer),
-        Layer.provide(summaryGeneratorLayer),
         Layer.provide(summaryWriterLayer),
+        Layer.provide(wikiSessionLayer),
+      ),
+    ),
+    Layer.provide(
+      IngestJobService.layer.pipe(
+        Layer.provide(graphStoreLayer),
       ),
     ),
     Layer.provideMerge(graphStoreLayer),

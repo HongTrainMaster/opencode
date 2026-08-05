@@ -14,11 +14,13 @@ import { KnowledgeApi } from "../groups/knowledge"
 import { KnowledgeSessionHandler } from "./knowledge"
 import { KnowledgeIngestHandler } from "./knowledge-ingest"
 import { KnowledgeGraphHandler } from "./knowledge-graph"
+import { KnowledgeSummaryHandler } from "./knowledge-summary"
 import { KnowledgeGraphStore } from "@/knowledge/store"
 import { EntityExtractor } from "@/knowledge/entity-extractor"
-import { SummaryGenerator } from "@/knowledge/summary-generator"
+import { WikiSessionService } from "@/knowledge/wiki-session"
 import { SummaryWriter } from "@/knowledge/summary-writer"
 import { IngestService } from "@/knowledge/ingest"
+import { IngestJobService } from "@/knowledge/ingest-job"
 import { testEffect } from "@test/lib/effect"
 import { tmpdir } from "node:os"
 
@@ -115,7 +117,7 @@ const graphStoreLayer = KnowledgeGraphStore.test(":memory:")
 const extractorLayer = EntityExtractor.test(({ title }) =>
   Effect.succeed({ entities: [{ name: title, type: "文档" }], relations: [] }),
 )
-const summaryGeneratorLayer = SummaryGenerator.test(() => Effect.succeed({ kind: "skipped" }))
+const wikiSessionLayer = WikiSessionService.test(() => Effect.succeed({ status: "SUCCESS" as const }))
 const summaryWriterLayer = SummaryWriter.test(tmpdir())
 
 const apiLayer = HttpRouter.serve(
@@ -123,14 +125,16 @@ const apiLayer = HttpRouter.serve(
     Layer.provide(KnowledgeSessionHandler),
     Layer.provide(KnowledgeIngestHandler),
     Layer.provide(KnowledgeGraphHandler),
+    Layer.provide(KnowledgeSummaryHandler),
     Layer.provide(
       IngestService.layer.pipe(
         Layer.provide(graphStoreLayer),
         Layer.provide(extractorLayer),
-        Layer.provide(summaryGeneratorLayer),
+        Layer.provide(wikiSessionLayer),
         Layer.provide(summaryWriterLayer),
       ),
     ),
+    Layer.provide(IngestJobService.layer.pipe(Layer.provide(graphStoreLayer))),
     Layer.provide([schemaErrorLayer, mockExternalAuthLayer]),
     HttpRouter.provideRequest(
       Layer.succeedContext(Context.empty() as Context.Context<never>),
@@ -139,6 +143,7 @@ const apiLayer = HttpRouter.serve(
   { disableListenLog: true, disableLogger: true },
 ).pipe(
   Layer.provideMerge(graphStoreLayer),
+  Layer.provideMerge(summaryWriterLayer),
   Layer.provideMerge(layerWebSocketConstructorGlobal),
   Layer.provideMerge(NodeHttpServer.layerTest),
   Layer.provideMerge(NodeServices.layer),

@@ -14,11 +14,13 @@ import { KnowledgeApi } from "../groups/knowledge"
 import { KnowledgeSessionHandler } from "./knowledge"
 import { KnowledgeIngestHandler } from "./knowledge-ingest"
 import { KnowledgeGraphHandler } from "./knowledge-graph"
+import { KnowledgeSummaryHandler } from "./knowledge-summary"
 import { KnowledgeGraphStore } from "@/knowledge/store"
 import { EntityExtractor } from "@/knowledge/entity-extractor"
-import { SummaryGenerator } from "@/knowledge/summary-generator"
 import { SummaryWriter } from "@/knowledge/summary-writer"
+import { WikiSessionService } from "@/knowledge/wiki-session"
 import { IngestService } from "@/knowledge/ingest"
+import { IngestJobService, type IngestJobServiceShape } from "@/knowledge/ingest-job"
 import { testEffect } from "@test/lib/effect"
 import { tmpdir } from "node:os"
 
@@ -88,9 +90,7 @@ const extractorLayer = EntityExtractor.test(({ title }) =>
     relations: [{ head: title, tail: "人力资源部", relation: "负责" }],
   }),
 )
-const summaryGeneratorLayer = SummaryGenerator.test(({ title }) =>
-  Effect.succeed({ kind: "success", markdown: `# ${title}\n\n## 核心观点\n\n- 要点` }),
-)
+const wikiSessionLayer = WikiSessionService.test(() => Effect.succeed({ status: "SUCCESS" as const }))
 const summaryWriterLayer = SummaryWriter.test(tmpdir())
 
 // ---- 组装 KnowledgeApi（session + ingest 两个 group）----
@@ -99,20 +99,23 @@ const apiLayer = HttpRouter.serve(
     Layer.provide(KnowledgeSessionHandler),
     Layer.provide(KnowledgeIngestHandler),
     Layer.provide(KnowledgeGraphHandler),
+    Layer.provide(KnowledgeSummaryHandler),
     Layer.provide(
       IngestService.layer.pipe(
         Layer.provide(graphStoreLayer),
         Layer.provide(extractorLayer),
-        Layer.provide(summaryGeneratorLayer),
+        Layer.provide(wikiSessionLayer),
         Layer.provide(summaryWriterLayer),
       ),
     ),
+    Layer.provideMerge(IngestJobService.layer.pipe(Layer.provide(graphStoreLayer))),
     Layer.provide([schemaErrorLayer, mockExternalAuthLayer]),
     HttpRouter.provideRequest(Layer.succeedContext(Context.empty() as Context.Context<never>)),
   ),
   { disableListenLog: true, disableLogger: true },
 ).pipe(
   Layer.provideMerge(graphStoreLayer),
+  Layer.provideMerge(summaryWriterLayer),
   Layer.provideMerge(layerWebSocketConstructorGlobal),
   Layer.provideMerge(NodeHttpServer.layerTest),
   Layer.provideMerge(NodeServices.layer),
@@ -121,9 +124,21 @@ const apiLayer = HttpRouter.serve(
 )
 const it = testEffect(apiLayer)
 
+/** 轮询 job 直到终态 */
+const pollJobUntilDone = (jobService: IngestJobServiceShape, jobId: string, attempts = 50): Effect.Effect<any, unknown, never> =>
+  Effect.gen(function* () {
+    for (let i = 0; i < attempts; i++) {
+      const job = yield* jobService.get(jobId)
+      if (job && job.status !== "RUNNING") return job
+      yield* Effect.sleep("10 millis")
+    }
+    throw new Error("timed out waiting for ingest job")
+  })
+
 describe("Knowledge Ingest HttpApi", () => {
-  it.live("ingests a document via POST /serve/api/ingest", () =>
+  it.live("submits a document via POST /serve/api/ingest and resolves job to SUCCESS", () =>
     Effect.gen(function* () {
+      const jobService = yield* IngestJobService
       const response = yield* HttpClientRequest.post("/serve/api/ingest").pipe(
         HttpClientRequest.setBody(
           HttpBody.jsonUnsafe({
@@ -132,6 +147,7 @@ describe("Knowledge Ingest HttpApi", () => {
               {
                 documentId: "10001",
                 title: "考勤制度",
+                llmPath: tmpdir(),
                 format: "txt",
                 operation: "CREATE",
                 fileContent: Buffer.from("第一章 考勤制度 人力资源部 负责 考勤 管理").toString("base64"),
@@ -146,14 +162,77 @@ describe("Knowledge Ingest HttpApi", () => {
       expect(body.code).toBe(200)
       expect(body.data).toHaveLength(1)
       expect(body.data[0].documentId).toBe("10001")
-      expect(body.data[0].status).toBe("SUCCESS")
-      expect(body.data[0].entities).toBe(2)
-      expect(body.data[0].relations).toBe(1)
-      expect(body.data[0].summary).toBe("SUCCESS")
+      expect(body.data[0].jobId).toBeTruthy()
+      expect(body.data[0].status).toBe("RUNNING")
+      // 轮询 job 到终态
+      const job = yield* pollJobUntilDone(jobService, body.data[0].jobId)
+      expect(job.status).toBe("SUCCESS")
+      expect(job.entities).toBe(2)
+      expect(job.relations).toBe(1)
+      expect(job.summary).toBe("SUCCESS")
     }),
   )
 
-  it.live("returns 403 for a workspace the user cannot access", () =>
+  it.live("GET /serve/api/ingest/jobs/:jobId returns the job status", () =>
+    Effect.gen(function* () {
+      const jobService = yield* IngestJobService
+      const jobId = yield* jobService.start({
+        documentId: "10001",
+        workspaceId: "ws_1",
+        operation: "CREATE",
+        run: Effect.succeed({ entities: 2, relations: 1, summary: "SUCCESS" }),
+      })
+      yield* pollJobUntilDone(jobService, jobId)
+      const response = yield* HttpClientRequest.get(`/serve/api/ingest/jobs/${jobId}`).pipe(
+        HttpClient.execute,
+      )
+      expect(response.status).toBe(200)
+      const body = (yield* response.json) as any
+      expect(body.code).toBe(200)
+      expect(body.data.jobId).toBe(jobId)
+      expect(body.data.status).toBe("SUCCESS")
+      expect(body.data.entities).toBe(2)
+    }),
+  )
+
+  it.live("GET /serve/api/ingest/jobs/:jobId returns 404 for unknown job", () =>
+    Effect.gen(function* () {
+      const response = yield* HttpClientRequest.get("/serve/api/ingest/jobs/job_unknown").pipe(
+        HttpClient.execute,
+      )
+      expect(response.status).toBe(404)
+    }),
+  )
+
+  it.live("GET /serve/api/ingest/jobs?ids= returns jobs in input order", () =>
+    Effect.gen(function* () {
+      const jobService = yield* IngestJobService
+      const id1 = yield* jobService.start({
+        documentId: "1",
+        workspaceId: "ws_1",
+        operation: "CREATE",
+        run: Effect.succeed({ entities: 1, relations: 0, summary: null }),
+      })
+      const id2 = yield* jobService.start({
+        documentId: "2",
+        workspaceId: "ws_1",
+        operation: "DELETE",
+        run: Effect.succeed({ entities: 0, relations: 0, summary: null }),
+      })
+      yield* pollJobUntilDone(jobService, id1)
+      yield* pollJobUntilDone(jobService, id2)
+      const response = yield* HttpClientRequest.get(
+        `/serve/api/ingest/jobs?ids=${id1},${id2}`,
+      ).pipe(HttpClient.execute)
+      expect(response.status).toBe(200)
+      const body = (yield* response.json) as any
+      expect(body.data).toHaveLength(2)
+      expect(body.data[0].jobId).toBe(id1)
+      expect(body.data[1].jobId).toBe(id2)
+    }),
+  )
+
+  it.live("accepts a workspace not in the identity (skips workspace check)", () =>
     Effect.gen(function* () {
       const response = yield* HttpClientRequest.post("/serve/api/ingest").pipe(
         HttpClientRequest.setBody(
@@ -164,13 +243,15 @@ describe("Knowledge Ingest HttpApi", () => {
         ),
         HttpClient.execute,
       )
-      expect(response.status).toBe(403)
+      // 入库跳过工作区校验，直接信任 documents 携带的 llmPath
+      expect(response.status).toBe(200)
     }),
   )
 
   it.live("ingest DELETE removes existing graph", () =>
     Effect.gen(function* () {
       const store = yield* KnowledgeGraphStore
+      const jobService = yield* IngestJobService
       yield* store.replaceDocumentGraph({
         workspaceId: "ws_1",
         documentId: "10001",
@@ -190,7 +271,7 @@ describe("Knowledge Ingest HttpApi", () => {
       )
       expect(response.status).toBe(200)
       const body = (yield* response.json) as any
-      expect(body.data[0].status).toBe("SUCCESS")
+      yield* pollJobUntilDone(jobService, body.data[0].jobId)
       const remaining = yield* store.listEntitiesByDocument({ documentId: "10001", userId: "user_1" })
       expect(remaining).toHaveLength(0)
     }),
