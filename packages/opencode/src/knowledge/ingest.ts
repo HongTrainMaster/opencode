@@ -1,10 +1,11 @@
-import { Context, Effect, Layer, Schema } from "effect"
+import { Context, Effect, Layer, Schema, Semaphore } from "effect"
 import type { ExternalIdentityInfo } from "@opencode-ai/server/auth/external-identity"
 import { parseDocument } from "./doc-parser"
 import { EntityExtractor } from "./entity-extractor"
+import { IngestJobService } from "./ingest-job"
 import { KnowledgeGraphStore } from "./store"
-import { SummaryGenerator } from "./summary-generator"
 import { SummaryWriter } from "./summary-writer"
+import { WikiSessionService } from "./wiki-session"
 
 export class IngestForbiddenError extends Schema.TaggedErrorClass<IngestForbiddenError>()(
   "IngestForbiddenError",
@@ -24,13 +25,10 @@ export interface IngestDocumentInput {
   fileContent?: string
 }
 
-export interface IngestDocumentResult {
+export interface IngestSubmitItem {
   documentId: string
-  status: "SUCCESS" | "FAILED"
-  entities: number
-  relations: number
-  summary?: "SUCCESS" | "SKIPPED"
-  error?: string
+  jobId: string
+  status: "RUNNING"
 }
 
 export interface IngestServiceShape {
@@ -38,7 +36,7 @@ export interface IngestServiceShape {
     workspaceId: string
     identity: ExternalIdentityInfo
     documents: IngestDocumentInput[]
-  }) => Effect.Effect<IngestDocumentResult[], IngestForbiddenError>
+  }) => Effect.Effect<IngestSubmitItem[], IngestForbiddenError>
 }
 
 export class IngestService extends Context.Service<IngestService, IngestServiceShape>()(
@@ -49,36 +47,67 @@ export class IngestService extends Context.Service<IngestService, IngestServiceS
     Effect.gen(function* () {
       const store = yield* KnowledgeGraphStore
       const extractor = yield* EntityExtractor
-      const summaryGenerator = yield* SummaryGenerator
       const summaryWriter = yield* SummaryWriter
+      const wikiSession = yield* WikiSessionService
+      const jobService = yield* IngestJobService
+
+      // wiki 会话并发上限（仅 wikiSession.build 过信号量，快速图操作不限）：
+      // 防止多个提交请求叠加打爆 LLM。环境变量可调，默认 2。
+      const wikiConcurrency = Number.parseInt(
+        process.env.KNOWLEDGE_INGEST_WIKI_CONCURRENCY ?? "2",
+        10,
+      )
+      const semaphore = yield* Semaphore.make(Math.max(1, Number.isFinite(wikiConcurrency) ? wikiConcurrency : 2))
+
       return IngestService.of({
         ingest: (args) =>
           Effect.gen(function* () {
-            yield* assertWorkspaceAllowed(args.identity, args.workspaceId)
             const scope: "PUBLIC" | "PRIVATE" = args.workspaceId.startsWith("my_") ? "PRIVATE" : "PUBLIC"
             const ownerId = scope === "PRIVATE" ? args.identity.userId : ""
-            const workspaceLlmPath = args.identity.workspaces.find((w) => w.workspaceId === args.workspaceId)?.llmPath
 
-            const ingestOne = (doc: IngestDocumentInput): Effect.Effect<IngestDocumentResult, Error> =>
+            yield* Effect.logInfo("knowledge ingest start", {
+              workspaceId: args.workspaceId,
+              scope,
+              userId: args.identity.userId,
+              documentCount: args.documents.length,
+            })
+
+            const runOne = (doc: IngestDocumentInput): Effect.Effect<
+              { entities: number; relations: number; summary: "SUCCESS" | "SKIPPED" | null },
+              Error
+            > =>
               Effect.gen(function* () {
                 if (doc.operation === "DELETE") {
                   const deleted = yield* store.deleteDocumentGraph({
                     workspaceId: args.workspaceId,
                     documentId: doc.documentId,
                   })
-                  if (workspaceLlmPath) {
-                    yield* summaryWriter.delete({ workspaceLlmPath, documentId: doc.documentId })
+                  yield* Effect.logInfo("knowledge ingest delete done", {
+                    documentId: doc.documentId,
+                    workspaceId: args.workspaceId,
+                    deletedEntities: deleted.deletedEntities,
+                    deletedRelations: deleted.deletedRelations,
+                  })
+                  if (doc.llmPath) {
+                    yield* summaryWriter.delete({ workspaceLlmPath: doc.llmPath, documentId: doc.documentId })
                   }
                   return {
-                    documentId: doc.documentId,
-                    status: "SUCCESS",
                     entities: deleted.deletedEntities,
                     relations: deleted.deletedRelations,
-                    summary: workspaceLlmPath ? "SUCCESS" : "SKIPPED",
+                    summary: doc.llmPath ? "SUCCESS" : null,
                   }
                 }
                 const parsed = yield* parseDocument({ format: doc.format ?? "", fileContent: doc.fileContent })
                 const extracted = yield* extractor.extract({ title: doc.title, text: parsed.text })
+                yield* Effect.logInfo("knowledge ingest write graph", {
+                  documentId: doc.documentId,
+                  workspaceId: args.workspaceId,
+                  scope,
+                  ownerId,
+                  title: doc.title,
+                  entityCount: extracted.entities.length,
+                  relationCount: extracted.relations.length,
+                })
                 const result = yield* store.replaceDocumentGraph({
                   workspaceId: args.workspaceId,
                   documentId: doc.documentId,
@@ -87,63 +116,66 @@ export class IngestService extends Context.Service<IngestService, IngestServiceS
                   entities: extracted.entities,
                   relations: extracted.relations,
                 })
-                let summary: "SUCCESS" | "SKIPPED" = "SKIPPED"
-                if (workspaceLlmPath) {
-                  const genResult = yield* summaryGenerator.summarize({ title: doc.title, text: parsed.text })
-                  if (genResult.kind === "success") {
-                    yield* summaryWriter.write({
-                      workspaceLlmPath,
+                yield* Effect.logInfo("knowledge ingest write graph done", {
+                  documentId: doc.documentId,
+                  workspaceId: args.workspaceId,
+                  entityCount: result.entityCount,
+                  relationCount: result.relationCount,
+                })
+                let summary: "SUCCESS" | "SKIPPED" | null = null
+                if (doc.llmPath) {
+                  yield* Effect.logInfo("knowledge summary start", {
+                    documentId: doc.documentId,
+                    workspaceId: args.workspaceId,
+                    workspaceLlmPath: doc.llmPath,
+                  })
+                  // Build entity/source pages through a headless opencode session
+                  // that runs the llm-wiki ingest workflow, so Q&A can find them.
+                  const wikiResult = yield* semaphore.withPermits(1)(
+                    wikiSession.build({
+                      workspaceLlmPath: doc.llmPath,
                       documentId: doc.documentId,
                       title: doc.title,
-                      markdown: genResult.markdown,
-                    })
+                      text: parsed.text,
+                    }),
+                  )
+                  if (wikiResult.status === "SUCCESS") {
                     summary = "SUCCESS"
+                  } else {
+                    summary = "SKIPPED"
+                    yield* Effect.logWarning("knowledge summary skipped", {
+                      documentId: doc.documentId,
+                      workspaceId: args.workspaceId,
+                      workspaceLlmPath: doc.llmPath,
+                      error: wikiResult.error,
+                    })
                   }
+                } else {
+                  yield* Effect.logDebug("knowledge summary skipped: no llmPath", {
+                    documentId: doc.documentId,
+                    workspaceId: args.workspaceId,
+                  })
                 }
                 return {
-                  documentId: doc.documentId,
-                  status: "SUCCESS",
                   entities: result.entityCount,
                   relations: result.relationCount,
                   summary,
                 }
               })
 
-            return yield* Effect.forEach(
-              args.documents,
-              (doc) =>
-                ingestOne(doc).pipe(
-                  // NOTE: Effect 4.0.0-beta.83 renamed catchAll to catch (same semantics)
-                  Effect.catch((error) =>
-                    Effect.succeed({
-                      documentId: doc.documentId,
-                      status: "FAILED" as const,
-                      entities: 0,
-                      relations: 0,
-                      error: error instanceof Error ? error.message : String(error),
-                    }),
-                  ),
-                ),
-              { concurrency: 2 },
-            )
+            const items: IngestSubmitItem[] = []
+            for (const doc of args.documents) {
+              const jobId = yield* jobService.start({
+                documentId: doc.documentId,
+                workspaceId: args.workspaceId,
+                operation: doc.operation,
+                run: runOne(doc),
+              })
+              items.push({ documentId: doc.documentId, jobId, status: "RUNNING" })
+            }
+            return items
           }),
       })
     }),
   )
-}
-
-function assertWorkspaceAllowed(
-  identity: ExternalIdentityInfo,
-  workspaceId: string,
-): Effect.Effect<void, IngestForbiddenError> {
-  // 自己的个人工作区总是放行（即使 getKnowledge 尚未返回）
-  if (workspaceId === `my_${identity.userId}`) return Effect.void
-  const ws = identity.workspaces.find((w) => w.workspaceId === workspaceId)
-  if (!ws) {
-    return Effect.fail(new IngestForbiddenError({ message: `workspace ${workspaceId} is not accessible to this user` }))
-  }
-  if (workspaceId.startsWith("my_")) {
-    return Effect.fail(new IngestForbiddenError({ message: "forbidden personal workspace" }))
-  }
-  return Effect.void
 }

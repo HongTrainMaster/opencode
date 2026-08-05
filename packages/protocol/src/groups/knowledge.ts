@@ -82,31 +82,91 @@ export const IngestPayload = Schema.Struct({
   documents: Schema.Array(IngestDocument),
 })
 
-export const IngestResultItem = Schema.Struct({
+// --- 异步契约：提交立即返回 jobId，查询走 GET /serve/api/ingest/jobs ---
+
+export const IngestSubmitItem = Schema.Struct({
   documentId: Schema.String,
-  status: Schema.Union([Schema.Literal("SUCCESS"), Schema.Literal("FAILED")]),
+  jobId: Schema.String,
+  status: Schema.Literal("RUNNING"),
+})
+
+export const IngestSubmitResponse = Schema.Struct({
+  code: Schema.Number,
+  data: Schema.Array(IngestSubmitItem),
+})
+
+export const IngestJobStatus = Schema.Union([
+  Schema.Literal("RUNNING"),
+  Schema.Literal("SUCCESS"),
+  Schema.Literal("FAILED"),
+  Schema.Literal("INTERRUPTED"),
+])
+
+export const IngestJobResult = Schema.Struct({
+  jobId: Schema.String,
+  documentId: Schema.String,
+  workspaceId: Schema.String,
+  operation: IngestOperation,
+  status: IngestJobStatus,
   entities: Schema.Number,
   relations: Schema.Number,
   summary: Schema.optional(Schema.Union([Schema.Literal("SUCCESS"), Schema.Literal("SKIPPED")])),
   error: Schema.optional(Schema.String),
+  createdAt: Schema.String,
+  updatedAt: Schema.String,
 })
 
-export const IngestResponse = Schema.Struct({
+export const IngestJobResponse = Schema.Struct({
   code: Schema.Number,
-  data: Schema.Array(IngestResultItem),
+  data: IngestJobResult,
 })
 
-export const KnowledgeIngestGroup = HttpApiGroup.make("knowledge.ingest").add(
-  HttpApiEndpoint.post("ingest", `${root}/ingest`, {
-    payload: IngestPayload,
-    success: IngestResponse,
-  }).annotateMerge(
-    OpenApi.annotations({
-      identifier: "knowledge.ingest",
-      summary: "Ingest a document into the knowledge graph (CREATE/UPDATE/DELETE)",
-    }),
-  ),
-)
+export const IngestJobListResponse = Schema.Struct({
+  code: Schema.Number,
+  data: Schema.Array(IngestJobResult),
+})
+
+export const IngestJobQuery = Schema.Struct({
+  ids: Schema.String,
+})
+
+export const KnowledgeIngestGroup = HttpApiGroup.make("knowledge.ingest")
+  .add(
+    HttpApiEndpoint.post("ingest", `${root}/ingest`, {
+      payload: IngestPayload,
+      success: IngestSubmitResponse,
+    }).annotateMerge(
+      OpenApi.annotations({
+        identifier: "knowledge.ingest",
+        summary: "Submit documents for asynchronous ingest (CREATE/UPDATE/DELETE)",
+      }),
+    ),
+  )
+  .add(
+    HttpApiEndpoint.get("job", `${root}/ingest/jobs/:jobId`, {
+      params: { jobId: Schema.String },
+      success: IngestJobResponse,
+      error: Schema.Union([
+        Schema.Struct({ _tag: Schema.Literal("NotFound"), message: Schema.String }),
+      ]),
+    }).annotateMerge(
+      OpenApi.annotations({
+        identifier: "knowledge.ingest.job",
+        summary: "Get a single ingest job status",
+      }),
+    ),
+  )
+  .add(
+    HttpApiEndpoint.get("jobs", `${root}/ingest/jobs`, {
+      query: IngestJobQuery,
+      success: IngestJobListResponse,
+    }).annotateMerge(
+      OpenApi.annotations({
+        identifier: "knowledge.ingest.jobs",
+        summary: "Get ingest job statuses by comma-separated ids (in input order)",
+      }),
+    ),
+  )
 
 // ===========================================================================
 // Graph query（供主系统转发展示；个人图谱按 owner 隔离）

@@ -46,10 +46,48 @@ export interface DeleteDocumentResult {
   deletedRelations: number
 }
 
+/** 入库任务行（kg_ingest_job）。status: RUNNING | SUCCESS | FAILED | INTERRUPTED */
+export interface IngestJobRow {
+  id: string
+  documentId: string
+  workspaceId: string
+  operation: "CREATE" | "UPDATE" | "DELETE"
+  status: "RUNNING" | "SUCCESS" | "FAILED" | "INTERRUPTED"
+  entities: number
+  relations: number
+  summary: string | null
+  error: string | null
+  createdAt: string
+  updatedAt: string
+}
+
 export interface KnowledgeGraphStoreShape {
   readonly migrate: Effect.Effect<void>
   readonly replaceDocumentGraph: (args: ReplaceDocumentGraphArgs) => Effect.Effect<ReplaceDocumentResult>
   readonly deleteDocumentGraph: (args: { workspaceId: string; documentId: string }) => Effect.Effect<DeleteDocumentResult>
+  readonly insertIngestJob: (row: {
+    id: string
+    documentId: string
+    workspaceId: string
+    operation: "CREATE" | "UPDATE" | "DELETE"
+    status: "RUNNING" | "SUCCESS" | "FAILED" | "INTERRUPTED"
+    entities?: number
+    relations?: number
+    summary?: string | null
+    error?: string | null
+  }) => Effect.Effect<void>
+  readonly updateIngestJob: (args: {
+    id: string
+    status?: "SUCCESS" | "FAILED"
+    entities?: number
+    relations?: number
+    summary?: string | null
+    error?: string | null
+  }) => Effect.Effect<void>
+  readonly getIngestJob: (id: string) => Effect.Effect<IngestJobRow | undefined>
+  readonly listIngestJobs: (ids: string[]) => Effect.Effect<IngestJobRow[]>
+  /** 重启兜底：把遗留 RUNNING 记录标记为 INTERRUPTED（幂等）。返回受影响行数 */
+  readonly interruptRunningIngestJobs: () => Effect.Effect<number>
   readonly listEntitiesByDocument: (args: { documentId: string; userId: string }) => Effect.Effect<GraphEntity[]>
   readonly listEntitiesByWorkspace: (args: { workspaceId: string; userId: string }) => Effect.Effect<GraphEntity[]>
   readonly listRelationsByWorkspace: (args: { workspaceId: string; userId: string }) => Effect.Effect<GraphRelation[]>
@@ -134,6 +172,22 @@ function makeStore(filename: string): KnowledgeGraphStoreShape {
     db.run("CREATE INDEX IF NOT EXISTS idx_kg_relation_head ON kg_relation(head_entity_id)")
     db.run("CREATE INDEX IF NOT EXISTS idx_kg_relation_tail ON kg_relation(tail_entity_id)")
     db.run("CREATE INDEX IF NOT EXISTS idx_kg_relation_doc ON kg_relation(source_document_id)")
+    db.run(`
+      CREATE TABLE IF NOT EXISTS kg_ingest_job (
+        id TEXT PRIMARY KEY,
+        document_id TEXT NOT NULL,
+        workspace_id TEXT NOT NULL,
+        operation TEXT NOT NULL,
+        status TEXT NOT NULL,
+        entities INTEGER NOT NULL DEFAULT 0,
+        relations INTEGER NOT NULL DEFAULT 0,
+        summary TEXT,
+        error TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    `)
+    db.run("CREATE INDEX IF NOT EXISTS idx_kg_ingest_job_status ON kg_ingest_job(status)")
   }
   migrate()
 
@@ -163,8 +217,89 @@ function makeStore(filename: string): KnowledgeGraphStoreShape {
     workspaceId: row.workspace_id,
   })
 
+  const rowToIngestJob = (row: any): IngestJobRow => ({
+    id: row.id,
+    documentId: row.document_id,
+    workspaceId: row.workspace_id,
+    operation: row.operation,
+    status: row.status,
+    entities: row.entities,
+    relations: row.relations,
+    summary: row.summary,
+    error: row.error,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  })
+
   return {
     migrate: Effect.sync(migrate),
+
+    insertIngestJob: (row) =>
+      Effect.sync(() => {
+        db.prepare(
+          `INSERT INTO kg_ingest_job
+            (id, document_id, workspace_id, operation, status, entities, relations, summary, error, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ).run(
+          row.id,
+          row.documentId,
+          row.workspaceId,
+          row.operation,
+          row.status,
+          row.entities ?? 0,
+          row.relations ?? 0,
+          row.summary ?? null,
+          row.error ?? null,
+          now(),
+          now(),
+        )
+      }),
+
+    updateIngestJob: (args) =>
+      Effect.sync(() => {
+        db.prepare(
+          `UPDATE kg_ingest_job
+           SET status = ?, entities = ?, relations = ?, summary = ?, error = ?, updated_at = ?
+           WHERE id = ?`,
+        ).run(
+          args.status ?? "FAILED",
+          args.entities ?? 0,
+          args.relations ?? 0,
+          args.summary ?? null,
+          args.error ?? null,
+          now(),
+          args.id,
+        )
+      }),
+
+    getIngestJob: (id) =>
+      Effect.sync(() => {
+        const row = db.prepare("SELECT * FROM kg_ingest_job WHERE id = ?").get(id) as any | undefined
+        return row ? rowToIngestJob(row) : undefined
+      }),
+
+    listIngestJobs: (ids) =>
+      Effect.sync(() => {
+        if (ids.length === 0) return []
+        const ph = ids.map(() => "?").join(",")
+        const rows = db
+          .prepare(`SELECT * FROM kg_ingest_job WHERE id IN (${ph})`)
+          .all(...ids) as Array<any>
+        // 按传入顺序返回（SQLite IN 不保序）
+        const byId = new Map(rows.map((r) => [r.id, rowToIngestJob(r)]))
+        return ids.map((id) => byId.get(id)).filter((r): r is IngestJobRow => r !== undefined)
+      }),
+
+    interruptRunningIngestJobs: () =>
+      Effect.sync(() => {
+        const ts = now()
+        const r = db
+          .prepare(
+            "UPDATE kg_ingest_job SET status = 'INTERRUPTED', updated_at = ? WHERE status = 'RUNNING'",
+          )
+          .run(ts)
+        return r.changes
+      }),
 
     replaceDocumentGraph: (args: ReplaceDocumentGraphArgs) =>
       Effect.sync(() => {

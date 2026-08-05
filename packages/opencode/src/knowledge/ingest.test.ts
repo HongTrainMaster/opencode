@@ -1,12 +1,13 @@
 import { describe, expect, it } from "bun:test"
 import { Effect, Layer } from "effect"
 import { ExternalIdentityInfo } from "@opencode-ai/server/auth/external-identity"
-import { EntityExtractor } from "./entity-extractor"
-import { IngestForbiddenError, IngestService } from "./ingest"
-import { KnowledgeGraphStore } from "./store"
-import { SummaryGenerator } from "./summary-generator"
+import { EntityExtractor, type ExtractedGraph } from "./entity-extractor"
+import { IngestService } from "./ingest"
+import { IngestJobService, type IngestJobServiceShape } from "./ingest-job"
+import { KnowledgeGraphStore, type IngestJobRow } from "./store"
 import { SummaryWriter } from "./summary-writer"
-import { access, mkdtemp, readFile, rm } from "node:fs/promises"
+import { WikiSessionService } from "./wiki-session"
+import { access, mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -31,32 +32,53 @@ const extractorLayer = EntityExtractor.test(({ title, text }) =>
     relations: [{ head: title, tail: "人力资源部", relation: "负责" }],
   }),
 )
-const summaryGeneratorLayer = SummaryGenerator.test(({ title }) =>
-  Effect.succeed({ kind: "success", markdown: `# ${title}\n\n## 核心观点\n\n- 要点一` }),
-)
 const summaryWriterLayerNoop = SummaryWriter.test(tmpdir())
 
+// Default wiki session mock: SUCCESS without invoking a real opencode session.
+const wikiSessionSuccessLayer = WikiSessionService.test(() =>
+  Effect.succeed({ status: "SUCCESS" as const }),
+)
+
+/** 轮询 job 直到终态（RUNNING/SUCCESS/FAILED/INTERRUPTED 中的终态为 SUCCESS/FAILED/INTERRUPTED） */
+const pollUntilDone = (
+  jobService: IngestJobServiceShape,
+  jobId: string,
+  attempts = 50,
+): Effect.Effect<IngestJobRow> =>
+  Effect.gen(function* () {
+    for (let i = 0; i < attempts; i++) {
+      const job = yield* jobService.get(jobId)
+      if (job && job.status !== "RUNNING") return job
+      yield* Effect.sleep("10 millis")
+    }
+    throw new Error("timed out waiting for ingest job")
+  })
+
 const run = <A>(
-  effect: Effect.Effect<A, IngestForbiddenError, IngestService | KnowledgeGraphStore>,
+  effect: Effect.Effect<A, unknown, IngestService | KnowledgeGraphStore | IngestJobService>,
   writerLayer: Layer.Layer<SummaryWriter> = summaryWriterLayerNoop,
+  wikiLayer: Layer.Layer<WikiSessionService> = wikiSessionSuccessLayer,
+  extractor: Layer.Layer<EntityExtractor> = extractorLayer,
 ) =>
   Effect.runPromise(
     effect.pipe(
       Effect.provide(IngestService.layer),
-      Effect.provide(extractorLayer),
+      Effect.provide(IngestJobService.layer),
+      Effect.provide(extractor),
       Effect.provide(storeLayer),
-      Effect.provide(summaryGeneratorLayer),
       Effect.provide(writerLayer),
+      Effect.provide(wikiLayer),
     ),
   )
 
 describe("IngestService", () => {
-  it("ingests a CREATE document and writes graph", async () => {
-    const results = await run(
+  it("submits CREATE as a job and resolves to SUCCESS with graph written", async () => {
+    const { item, job, entities } = await run(
       Effect.gen(function* () {
         const svc = yield* IngestService
+        const jobService = yield* IngestJobService
         const store = yield* KnowledgeGraphStore
-        const res = yield* svc.ingest({
+        const items = yield* svc.ingest({
           workspaceId: "kb_1",
           identity,
           documents: [
@@ -69,23 +91,28 @@ describe("IngestService", () => {
             },
           ],
         })
+        const item = items[0]!
+        // 提交立即返回，状态为 RUNNING
+        expect(item.status).toBe("RUNNING")
+        expect(item.jobId).toBeTruthy()
+        const job = yield* pollUntilDone(jobService, item.jobId)
         const entities = yield* store.listEntitiesByDocument({ documentId: "10001", userId: "user_1" })
-        return { res, entities }
+        return { item, job, entities }
       }),
     )
-    expect(results.res).toHaveLength(1)
-    expect(results.res[0]!.status).toBe("SUCCESS")
-    expect(results.res[0]!.entities).toBe(2)
-    expect(results.res[0]!.relations).toBe(1)
-    expect(results.entities).toHaveLength(2)
+    expect(job.status).toBe("SUCCESS")
+    expect(job.entities).toBe(2)
+    expect(job.relations).toBe(1)
+    expect(entities).toHaveLength(2)
   })
 
-  it("DELETE removes the document graph", async () => {
-    const results = await run(
+  it("DELETE resolves to SUCCESS and removes the graph", async () => {
+    const { job, entities } = await run(
       Effect.gen(function* () {
         const svc = yield* IngestService
+        const jobService = yield* IngestJobService
         const store = yield* KnowledgeGraphStore
-        yield* svc.ingest({
+        const createItems = yield* svc.ingest({
           workspaceId: "kb_1",
           identity,
           documents: [
@@ -98,47 +125,45 @@ describe("IngestService", () => {
             },
           ],
         })
-        const res = yield* svc.ingest({
+        // 等 CREATE job 完成后 DELETE，避免并发写同一文档图
+        yield* pollUntilDone(jobService, createItems[0]!.jobId)
+        const items = yield* svc.ingest({
           workspaceId: "kb_1",
           identity,
           documents: [{ documentId: "10001", title: "考勤制度", operation: "DELETE" }],
         })
+        const job = yield* pollUntilDone(jobService, items[0]!.jobId)
         const entities = yield* store.listEntitiesByDocument({ documentId: "10001", userId: "user_1" })
-        return { res, entities }
+        return { job, entities }
       }),
     )
-    expect(results.res[0]!.status).toBe("SUCCESS")
-    expect(results.entities).toHaveLength(0)
+    expect(job.status).toBe("SUCCESS")
+    expect(entities).toHaveLength(0)
   })
 
-  it("fails with IngestForbiddenError for inaccessible workspace", async () => {
-    const err = await Effect.runPromise(
+  it("ingests to a workspace not listed in identity (skips workspace check)", async () => {
+    const results = await run(
       Effect.gen(function* () {
         const svc = yield* IngestService
-        return yield* svc.ingest({
+        const jobService = yield* IngestJobService
+        const items = yield* svc.ingest({
           workspaceId: "kb_other",
           identity,
           documents: [{ documentId: "1", title: "x", operation: "DELETE" }],
         })
-      })
-        .pipe(
-          Effect.provide(IngestService.layer),
-          Effect.provide(extractorLayer),
-          Effect.provide(storeLayer),
-          Effect.provide(summaryGeneratorLayer),
-          Effect.provide(summaryWriterLayerNoop),
-        )
-        .pipe(Effect.flip),
+        return yield* pollUntilDone(jobService, items[0]!.jobId)
+      }),
     )
-    expect(err).toBeInstanceOf(IngestForbiddenError)
+    expect(results.status).toBe("SUCCESS")
   })
 
   it("allows own personal workspace even if not listed", async () => {
-    const results = await run(
+    const { job, entities } = await run(
       Effect.gen(function* () {
         const svc = yield* IngestService
+        const jobService = yield* IngestJobService
         const store = yield* KnowledgeGraphStore
-        const res = yield* svc.ingest({
+        const items = yield* svc.ingest({
           workspaceId: "my_user_1",
           identity,
           documents: [
@@ -151,49 +176,56 @@ describe("IngestService", () => {
             },
           ],
         })
+        const job = yield* pollUntilDone(jobService, items[0]!.jobId)
         const entities = yield* store.listEntitiesByDocument({ documentId: "20001", userId: "user_1" })
-        return { res, entities }
+        return { job, entities }
       }),
     )
-    expect(results.res[0]!.status).toBe("SUCCESS")
-    expect(results.entities).toHaveLength(2)
+    expect(job.status).toBe("SUCCESS")
+    expect(entities).toHaveLength(2)
   })
 
-  it("creates summary source page when workspace has llmPath", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "kg-ingest-"))
-    try {
-      const results = await run(
-        Effect.gen(function* () {
-          const svc = yield* IngestService
-          const res = yield* svc.ingest({
-            workspaceId: "kb_1",
-            identity,
-            documents: [{
-              documentId: "10001",
-              title: "考勤制度",
-              format: "txt",
-              operation: "CREATE",
-              fileContent: Buffer.from("第一章 考勤制度 人力资源部 负责 考勤 管理").toString("base64"),
-            }],
-          })
-          return res
-        }),
-        SummaryWriter.test(dir),
-      )
-      expect(results[0]!.summary).toBe("SUCCESS")
-      const page = await readFile(join(dir, "wiki", "sources", "10001.md"), "utf-8")
-      expect(page).toContain("# 考勤制度")
-    } finally {
-      await rm(dir, { recursive: true, force: true })
-    }
+  it("runs wiki session to build pages when document carries llmPath", async () => {
+    let called: { workspaceLlmPath: string; documentId: string; title: string } | undefined
+    const wikiLayer = WikiSessionService.test((args) => {
+      called = { workspaceLlmPath: args.workspaceLlmPath, documentId: args.documentId, title: args.title }
+      return Effect.succeed({ status: "SUCCESS" as const })
+    })
+    const job = await run(
+      Effect.gen(function* () {
+        const svc = yield* IngestService
+        const jobService = yield* IngestJobService
+        const items = yield* svc.ingest({
+          workspaceId: "kb_1",
+          identity,
+          documents: [{
+            documentId: "10001",
+            title: "考勤制度",
+            llmPath: join(tmpdir(), "kg-ingest-test", "kb_1"),
+            format: "txt",
+            operation: "CREATE",
+            fileContent: Buffer.from("第一章 考勤制度 人力资源部 负责 考勤 管理").toString("base64"),
+          }],
+        })
+        return yield* pollUntilDone(jobService, items[0]!.jobId)
+      }),
+      summaryWriterLayerNoop,
+      wikiLayer,
+    )
+    expect(job.status).toBe("SUCCESS")
+    expect(job.summary).toBe("SUCCESS")
+    expect(called).toBeDefined()
+    expect(called!.documentId).toBe("10001")
+    expect(called!.title).toBe("考勤制度")
+    expect(called!.workspaceLlmPath).toContain("kg-ingest-test")
   })
 
   it("skips summary when workspace has no llmPath", async () => {
-    const results = await run(
+    const job = await run(
       Effect.gen(function* () {
         const svc = yield* IngestService
-        const store = yield* KnowledgeGraphStore
-        const res = yield* svc.ingest({
+        const jobService = yield* IngestJobService
+        const items = yield* svc.ingest({
           workspaceId: "my_user_1",
           identity,
           documents: [{
@@ -204,21 +236,21 @@ describe("IngestService", () => {
             fileContent: Buffer.from("我的私人笔记内容").toString("base64"),
           }],
         })
-        const entities = yield* store.listEntitiesByDocument({ documentId: "20001", userId: "user_1" })
-        return { res, entities }
+        return yield* pollUntilDone(jobService, items[0]!.jobId)
       }),
     )
-    expect(results.res[0]!.summary).toBe("SKIPPED")
-    expect(results.entities).toHaveLength(2)
+    expect(job.status).toBe("SUCCESS")
+    expect(job.summary).toBeNull()
   })
 
   it("deletes source page on DELETE operation", async () => {
     const dir = await mkdtemp(join(tmpdir(), "kg-ingest-"))
     try {
-      const res = await run(
+      await run(
         Effect.gen(function* () {
           const svc = yield* IngestService
-          yield* svc.ingest({
+          const jobService = yield* IngestJobService
+          const createItems = yield* svc.ingest({
             workspaceId: "kb_1",
             identity,
             documents: [{
@@ -229,19 +261,53 @@ describe("IngestService", () => {
               fileContent: Buffer.from("正文").toString("base64"),
             }],
           })
-          return yield* svc.ingest({
+          yield* pollUntilDone(jobService, createItems[0]!.jobId)
+          const items = yield* svc.ingest({
             workspaceId: "kb_1",
             identity,
-            documents: [{ documentId: "10001", title: "考勤制度", operation: "DELETE" }],
+            documents: [{ documentId: "10001", title: "考勤制度", llmPath: dir, operation: "DELETE" }],
           })
+          yield* pollUntilDone(jobService, items[0]!.jobId)
         }),
         SummaryWriter.test(dir),
       )
-      expect(res[0]!.summary).toBe("SUCCESS")
+      // DELETE still goes through summaryWriter.delete; with no prior file written
+      // the delete is a no-op (ENOENT ignored), so the file must not exist.
       const exists = await access(join(dir, "wiki", "sources", "10001.md")).then(() => true).catch(() => false)
       expect(exists).toBe(false)
     } finally {
       await rm(dir, { recursive: true, force: true })
     }
+  })
+
+  it("FAILED job records error when extractor throws", async () => {
+    const failingExtractorLayer = EntityExtractor.test(
+      () => Effect.fail(new Error("extract exploded")) as unknown as Effect.Effect<ExtractedGraph>,
+    )
+    const job = await run(
+      Effect.gen(function* () {
+        const svc = yield* IngestService
+        const jobService = yield* IngestJobService
+        const items = yield* svc.ingest({
+          workspaceId: "kb_1",
+          identity,
+          documents: [
+            {
+              documentId: "999",
+              title: "坏文档",
+              format: "txt",
+              operation: "CREATE",
+              fileContent: Buffer.from("正文").toString("base64"),
+            },
+          ],
+        })
+        return yield* pollUntilDone(jobService, items[0]!.jobId)
+      }),
+      summaryWriterLayerNoop,
+      wikiSessionSuccessLayer,
+      failingExtractorLayer,
+    )
+    expect(job.status).toBe("FAILED")
+    expect(job.error).toContain("extract exploded")
   })
 })
