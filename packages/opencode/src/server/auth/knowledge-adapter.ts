@@ -159,6 +159,9 @@ export const KnowledgeAdapterLayer = Layer.effect(
         // Decode user info from JWT payload directly (no backend API call)
         const decoded = decodeUserInfoFromToken(token)
         if (!decoded) {
+          yield* Effect.logWarning("knowledge adapter: JWT missing userId/userName claims, empty identity", {
+            clientId,
+          })
           return ExternalIdentityInfo.make({
             userId: "",
             nickName: "",
@@ -167,6 +170,11 @@ export const KnowledgeAdapterLayer = Layer.effect(
             permissions: {},
           })
         }
+        yield* Effect.logInfo("knowledge adapter: JWT decoded", {
+          userId: String(decoded.userId),
+          userName: decoded.userName,
+          tenantId: decoded.tenantId,
+        })
 
         // Try fetching workspaces from business system; callGetKnowledge already
         // handles all errors internally (Effect.option → empty on failure).

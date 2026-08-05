@@ -1,4 +1,5 @@
 import { Context, Effect, Layer, Schema, Semaphore } from "effect"
+import { readFile } from "node:fs/promises"
 import type { ExternalIdentityInfo } from "@opencode-ai/server/auth/external-identity"
 import { parseDocument } from "./doc-parser"
 import { EntityExtractor } from "./entity-extractor"
@@ -11,6 +12,12 @@ export class IngestForbiddenError extends Schema.TaggedErrorClass<IngestForbidde
   "IngestForbiddenError",
   { message: Schema.String },
 ) {}
+
+/** 去掉 llm-wiki 源页开头的 YAML frontmatter，只保留正文（SummaryWriter 会补自己的 frontmatter） */
+function stripFrontmatter(markdown: string): string {
+  const m = /^---\r?\n[\s\S]*?\r?\n---\r?\n?/.exec(markdown)
+  return m ? markdown.slice(m[0].length).trim() : markdown.trim()
+}
 
 export interface IngestDocumentInput {
   documentId: string
@@ -139,8 +146,40 @@ export class IngestService extends Context.Service<IngestService, IngestServiceS
                       text: parsed.text,
                     }),
                   )
-                  if (wikiResult.status === "SUCCESS") {
-                    summary = "SUCCESS"
+                  if (wikiResult.status === "SUCCESS" && wikiResult.sourcePath) {
+                    // 根因1修复：llm-wiki 按"日期-标题"命名源页，业务端用 documentId 查不到。
+                    // 把 LLM 生成的源页正文以 {documentId}.md 为名落盘，供 /serve/api/summary 读取。
+                    const workspaceLlmPath = doc.llmPath
+                    const persistOutcome = yield* Effect.result(
+                      Effect.gen(function* () {
+                        const raw = yield* Effect.tryPromise({
+                          try: async () => readFile(wikiResult.sourcePath!, "utf-8"),
+                          catch: (error) =>
+                            new Error(`failed to read wiki source page: ${String(error)}`),
+                        })
+                        yield* summaryWriter.write({
+                          workspaceLlmPath,
+                          documentId: doc.documentId,
+                          title: doc.title,
+                          markdown: stripFrontmatter(raw),
+                        })
+                      }),
+                    )
+                    if (persistOutcome._tag === "Failure") {
+                      summary = "SKIPPED"
+                      yield* Effect.logWarning("knowledge summary persist failed", {
+                        documentId: doc.documentId,
+                        workspaceId: args.workspaceId,
+                        workspaceLlmPath: doc.llmPath,
+                        sourcePath: wikiResult.sourcePath,
+                        error:
+                          persistOutcome.failure instanceof Error
+                            ? persistOutcome.failure.message
+                            : String(persistOutcome.failure),
+                      })
+                    } else {
+                      summary = "SUCCESS"
+                    }
                   } else {
                     summary = "SKIPPED"
                     yield* Effect.logWarning("knowledge summary skipped", {

@@ -1,4 +1,4 @@
-import { Effect, Layer, Encoding, Result } from "effect"
+import { Cause, Effect, Layer, Encoding, Result } from "effect"
 import { HttpApiError, HttpApiMiddleware } from "effect/unstable/httpapi"
 import { HttpRouter } from "effect/unstable/http"
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest"
@@ -66,18 +66,44 @@ export const externalAuthLayer = Layer.effect(
       Effect.gen(function* () {
         const request = yield* HttpServerRequest.HttpServerRequest
         const token = extractBearerToken(request)
-        if (!token) return yield* effect
+        const clientId = request.headers.clientid
+        const path = new URL(request.url, "http://localhost").pathname
+
+        if (!token) {
+          yield* Effect.logInfo("external auth: no token, using anonymous identity", {
+            path,
+            hasAuthHeader: request.headers.authorization != null,
+          })
+          return yield* effect
+        }
 
         const maybeAdapter = yield* Effect.serviceOption(ExternalIdentityAdapterTag)
         if (maybeAdapter._tag === "None") return yield* effect
 
-        const info = yield* maybeAdapter.value.authenticate(
-          token,
-          request.headers.clientid,
-        ).pipe(
-          Effect.catchCause(() => Effect.succeed(null as any)),
+        const info = yield* maybeAdapter.value.authenticate(token, clientId).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("external auth: authenticate failed, using anonymous identity", {
+              path,
+              clientId,
+              cause: Cause.pretty(cause),
+            }).pipe(Effect.as(null as any)),
+          ),
         )
-        if (!info) return yield* effect
+        if (!info) {
+          yield* Effect.logWarning("external auth: authenticate returned no identity", {
+            path,
+            clientId,
+          })
+          return yield* effect
+        }
+
+        yield* Effect.logInfo("external auth: identity resolved", {
+          path,
+          userId: info.userId || "",
+          nickName: info.nickName || "",
+          tenantId: info.tenantId || "",
+          workspaceCount: (info.workspaces ?? []).length,
+        })
 
         return yield* effect.pipe(
           Effect.provideService(ExternalIdentity, ExternalIdentity.of(info)),

@@ -7,7 +7,8 @@ import { IngestJobService, type IngestJobServiceShape } from "./ingest-job"
 import { KnowledgeGraphStore, type IngestJobRow } from "./store"
 import { SummaryWriter } from "./summary-writer"
 import { WikiSessionService } from "./wiki-session"
-import { access, mkdtemp, rm } from "node:fs/promises"
+import { mkdtempSync, writeFileSync } from "node:fs"
+import { access, mkdtemp, readFile, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -35,8 +36,15 @@ const extractorLayer = EntityExtractor.test(({ title, text }) =>
 const summaryWriterLayerNoop = SummaryWriter.test(tmpdir())
 
 // Default wiki session mock: SUCCESS without invoking a real opencode session.
+// 按新契约返回 sourcePath（指向一个真实存在的临时源页），供入库管线落盘 {documentId}.md。
+const wikiSourcePage = (() => {
+  const dir = mkdtempSync(join(tmpdir(), "wiki-mock-"))
+  const p = join(dir, "source.md")
+  writeFileSync(p, "# 默认源页\n\n- 要点", "utf-8")
+  return p
+})()
 const wikiSessionSuccessLayer = WikiSessionService.test(() =>
-  Effect.succeed({ status: "SUCCESS" as const }),
+  Effect.succeed({ status: "SUCCESS" as const, sourcePath: wikiSourcePage }),
 )
 
 /** 轮询 job 直到终态（RUNNING/SUCCESS/FAILED/INTERRUPTED 中的终态为 SUCCESS/FAILED/INTERRUPTED） */
@@ -185,12 +193,57 @@ describe("IngestService", () => {
     expect(entities).toHaveLength(2)
   })
 
-  it("runs wiki session to build pages when document carries llmPath", async () => {
+  it("runs wiki session to build pages and persists summary as {documentId}.md", async () => {
     let called: { workspaceLlmPath: string; documentId: string; title: string } | undefined
+    const writerDir = mkdtempSync(join(tmpdir(), "kg-summary-"))
+    const sourceDir = mkdtempSync(join(tmpdir(), "wiki-mock-"))
+    const sourceFile = join(sourceDir, "source.md")
+    writeFileSync(sourceFile, "# 考勤制度\n\n## 核心观点\n\n- 要点一", "utf-8")
     const wikiLayer = WikiSessionService.test((args) => {
       called = { workspaceLlmPath: args.workspaceLlmPath, documentId: args.documentId, title: args.title }
-      return Effect.succeed({ status: "SUCCESS" as const })
+      return Effect.succeed({ status: "SUCCESS" as const, sourcePath: sourceFile })
     })
+    try {
+      const job = await run(
+        Effect.gen(function* () {
+          const svc = yield* IngestService
+          const jobService = yield* IngestJobService
+          const items = yield* svc.ingest({
+            workspaceId: "kb_1",
+            identity,
+            documents: [{
+              documentId: "10001",
+              title: "考勤制度",
+              llmPath: writerDir,
+              format: "txt",
+              operation: "CREATE",
+              fileContent: Buffer.from("第一章 考勤制度 人力资源部 负责 考勤 管理").toString("base64"),
+            }],
+          })
+          return yield* pollUntilDone(jobService, items[0]!.jobId)
+        }),
+        SummaryWriter.test(writerDir),
+        wikiLayer,
+      )
+      expect(job.status).toBe("SUCCESS")
+      expect(job.summary).toBe("SUCCESS")
+      expect(called).toBeDefined()
+      expect(called!.documentId).toBe("10001")
+      expect(called!.title).toBe("考勤制度")
+      // 根因1(a)：LLM 源页正文已以 {documentId}.md 落盘，供 /serve/api/summary 读取
+      const persisted = await readFile(join(writerDir, "wiki", "sources", "10001.md"), "utf-8")
+      expect(persisted).toContain("核心观点")
+      expect(persisted).toContain("type: summary")
+    } finally {
+      await rm(writerDir, { recursive: true, force: true })
+      await rm(sourceDir, { recursive: true, force: true })
+    }
+  })
+
+  it("marks summary SKIPPED when wiki session reports SUCCESS but writes no source page", async () => {
+    const wikiLayer = WikiSessionService.test(() =>
+      Effect.succeed({ status: "SUCCESS" as const }),
+    )
     const job = await run(
       Effect.gen(function* () {
         const svc = yield* IngestService
@@ -204,7 +257,7 @@ describe("IngestService", () => {
             llmPath: join(tmpdir(), "kg-ingest-test", "kb_1"),
             format: "txt",
             operation: "CREATE",
-            fileContent: Buffer.from("第一章 考勤制度 人力资源部 负责 考勤 管理").toString("base64"),
+            fileContent: Buffer.from("正文").toString("base64"),
           }],
         })
         return yield* pollUntilDone(jobService, items[0]!.jobId)
@@ -213,11 +266,7 @@ describe("IngestService", () => {
       wikiLayer,
     )
     expect(job.status).toBe("SUCCESS")
-    expect(job.summary).toBe("SUCCESS")
-    expect(called).toBeDefined()
-    expect(called!.documentId).toBe("10001")
-    expect(called!.title).toBe("考勤制度")
-    expect(called!.workspaceLlmPath).toContain("kg-ingest-test")
+    expect(job.summary).toBe("SKIPPED")
   })
 
   it("skips summary when workspace has no llmPath", async () => {

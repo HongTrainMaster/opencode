@@ -22,7 +22,9 @@ import { WikiSessionService } from "@/knowledge/wiki-session"
 import { IngestService } from "@/knowledge/ingest"
 import { IngestJobService, type IngestJobServiceShape } from "@/knowledge/ingest-job"
 import { testEffect } from "@test/lib/effect"
+import { mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
+import { join } from "node:path"
 
 // ---- mock session（从 knowledge.test.ts 复刻）----
 const now = DateTime.makeUnsafe(Date.now())
@@ -90,7 +92,16 @@ const extractorLayer = EntityExtractor.test(({ title }) =>
     relations: [{ head: title, tail: "人力资源部", relation: "负责" }],
   }),
 )
-const wikiSessionLayer = WikiSessionService.test(() => Effect.succeed({ status: "SUCCESS" as const }))
+// wiki 会话 mock：SUCCESS + 真实存在的源页路径（入库管线会把它落盘为 {documentId}.md）
+const wikiSourcePage = (() => {
+  const dir = mkdtempSync(join(tmpdir(), "wiki-mock-"))
+  const p = join(dir, "source.md")
+  writeFileSync(p, "# 考勤制度\n\n## 核心观点\n\n- 要点一", "utf-8")
+  return p
+})()
+const wikiSessionLayer = WikiSessionService.test(() =>
+  Effect.succeed({ status: "SUCCESS" as const, sourcePath: wikiSourcePage }),
+)
 const summaryWriterLayer = SummaryWriter.test(tmpdir())
 
 // ---- 组装 KnowledgeApi（session + ingest 两个 group）----
