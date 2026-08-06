@@ -1,5 +1,8 @@
 # 知识库目标系统对接说明
 
+> 📌 服务端部署配置（vLLM / opencode-server / 业务系统 sys_config / llm-wiki 目录）见
+> [knowledge-server-deployment.md](./knowledge-server-deployment.md)。
+
 ## 概述
 
 主系统（bj-plus-ai-web）通过 iframe 嵌入 `/knowledge` 路径，该请求经 NGINX 代理转发到目标系统（另一个独立的 Web 应用）。iframe URL 携带登录 token，目标系统需要用此 token 调主系统的接口获取用户身份和权限。

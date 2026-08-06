@@ -28,8 +28,14 @@ export class SummaryGenerator extends Context.Service<
       return SummaryGenerator.of({
         summarize: (args) =>
           Effect.gen(function* () {
-            if (!baseUrl) return { kind: "skipped" }
+            if (!baseUrl) {
+              yield* Effect.logWarning("knowledge summary skipped: KNOWLEDGE_LLM_BASE_URL not configured", {
+                title: args.title,
+              })
+              return { kind: "skipped" }
+            }
             const url = `${baseUrl.replace(/\/+$/, "")}/chat/completions`
+            yield* Effect.logInfo("knowledge summary llm request", { title: args.title, url, model })
             const response = yield* http
               .execute(
                 HttpClientRequest.post(url).pipe(
@@ -47,13 +53,30 @@ export class SummaryGenerator extends Context.Service<
                   ),
                 ),
               )
-              .pipe(Effect.catch(() => Effect.succeed(null)))
-            if (!response || response.status !== 200) return { kind: "skipped" }
+              .pipe(
+                Effect.catch((error) =>
+                  Effect.logWarning("knowledge summary llm request failed", {
+                    title: args.title,
+                    error: error instanceof Error ? error.message : String(error),
+                  }).pipe(Effect.as(null)),
+                ),
+              )
+            if (!response || response.status !== 200) {
+              yield* Effect.logWarning("knowledge summary llm non-200", {
+                title: args.title,
+                status: response?.status,
+              })
+              return { kind: "skipped" }
+            }
             const body = (yield* Effect.catch(response.json, () => Effect.succeed(null))) as
               | { choices?: Array<{ message?: { content?: string } }> }
               | null
             const content = body?.choices?.[0]?.message?.content
-            if (!content) return { kind: "skipped" }
+            if (!content) {
+              yield* Effect.logWarning("knowledge summary llm empty content", { title: args.title, body })
+              return { kind: "skipped" }
+            }
+            yield* Effect.logInfo("knowledge summary generated", { title: args.title, markdownLength: content.length })
             return { kind: "success", markdown: content }
           }),
       })

@@ -80,18 +80,35 @@ function makeWriter(rootOverride: string | null): SummaryWriterShape {
         const safeId = sanitizeDocumentId(documentId)
         const root = resolveRoot(workspaceLlmPath)
         const sourcesDir = join(root, "wiki", "sources")
+        const targetPath = join(sourcesDir, `${safeId}.md`)
         yield* ensureSchema(root)
+        yield* Effect.logInfo("knowledge summary write", {
+          workspaceLlmPath,
+          documentId,
+          safeId,
+          title,
+          targetPath,
+        })
         const created = today()
         const content = frontmatter(title, created, created) + "\n" + markdown.trim() + "\n"
         yield* Effect.tryPromise({
           try: async () => {
             await mkdir(sourcesDir, { recursive: true })
-            await writeFile(join(sourcesDir, `${safeId}.md`), content, "utf-8")
+            await writeFile(targetPath, content, "utf-8")
           },
           catch: (error) => {
             return new Error(`failed to write summary: ${String(error)}`)
           },
-        })
+        }).pipe(
+          Effect.tapError((error) =>
+            Effect.logError("knowledge summary write failed", {
+              documentId,
+              targetPath,
+              error: error.message,
+            }),
+          ),
+        )
+        yield* Effect.logInfo("knowledge summary write done", { documentId, targetPath })
       }),
 
     delete: ({ workspaceLlmPath, documentId }) =>
@@ -99,6 +116,7 @@ function makeWriter(rootOverride: string | null): SummaryWriterShape {
         const safeId = sanitizeDocumentId(documentId)
         const root = resolveRoot(workspaceLlmPath)
         const filePath = join(root, "wiki", "sources", `${safeId}.md`)
+        yield* Effect.logInfo("knowledge summary delete", { workspaceLlmPath, documentId, targetPath: filePath })
         yield* Effect.tryPromise({
           try: async () => {
             try {

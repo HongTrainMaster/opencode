@@ -13,7 +13,7 @@ test.describe("knowledge sidebar", () => {
 
     // Navigate to knowledge page with a fake Bearer token
     // (it'll be rejected by the business API, but the fetch should still be attempted)
-    await page.goto("/knowledge?Authorization=Bearer%20test-playwright-token", {
+    await page.goto("/opencode?Authorization=Bearer%20test-playwright-token", {
       waitUntil: "networkidle",
     })
 
@@ -21,8 +21,8 @@ test.describe("knowledge sidebar", () => {
     const container = page.locator(".knowledge-home")
     await expect(container).toBeVisible({ timeout: 10_000 })
 
-    // Check that a fetch to /knowledge/api/workspaces was attempted
-    const workspaceApiCalls = requests.filter((u) => u.includes("/knowledge/api/workspaces"))
+    // Check that a fetch to /opencode/api/workspaces was attempted
+    const workspaceApiCalls = requests.filter((u) => u.includes("/opencode/api/workspaces"))
     expect(workspaceApiCalls.length).toBeGreaterThanOrEqual(1)
 
     // Verify the Bearer token was passed in the URL

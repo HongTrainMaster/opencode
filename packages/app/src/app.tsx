@@ -602,9 +602,9 @@ function Routes(props: { serverScoped?: JSX.Element }) {
         <Route path="/server/:serverKey/session/:id" component={TargetSessionRoute} />
       </Show>
       <Route path="/new-session" component={DraftRoute} />
-      <Route path="/knowledge" component={KnowledgeHome} />
-      <Route path="/knowledge/home" component={KnowledgeHome} />
-      <Route path="/knowledge/index.html" component={KnowledgeHome} />
+      <Route path="/opencode" component={KnowledgeHome} />
+      <Route path="/opencode/home" component={KnowledgeHome} />
+      <Route path="/opencode/index.html" component={KnowledgeHome} />
     </>
   )
 }

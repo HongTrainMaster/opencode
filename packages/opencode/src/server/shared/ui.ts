@@ -81,7 +81,7 @@ export function serveEmbeddedUIEffect(
   )
 }
 
-/** Inject a script into the HTML that sets window.__USER_INFO__ from the /knowledge/api/workspaces
+/** Inject a script into the HTML that sets window.__USER_INFO__ from the /opencode/api/workspaces
  * endpoint, so the KnowledgeHome component can display workspaces without a server-side injection of
  * the global variable. Also extracts the auth token from query params for session links.
  * The Bearer token is passed as a query param because nginx overwrites the Authorization header. */
@@ -94,8 +94,8 @@ function injectKnowledgeUserInfo(body: string, requestUrl: string): string {
     var params = new URLSearchParams(location.search);
     var bearer = params.get("Authorization");
     var apiUrl = bearer
-      ? "/knowledge/api/workspaces?Authorization=" + encodeURIComponent(bearer)
-      : "/knowledge/api/workspaces";
+      ? "/opencode/api/workspaces?Authorization=" + encodeURIComponent(bearer)
+      : "/opencode/api/workspaces";
     var r = await fetch(apiUrl);
     if (r.ok) {
       var d = await r.json();
@@ -120,7 +120,7 @@ export function serveUIEffect(
   return Effect.gen(function* () {
     const embeddedWebUI = yield* Effect.promise(() => embeddedUI(services.disableEmbeddedWebUi))
     const path = new URL(request.url, "http://localhost").pathname
-    const isKnowledgePage = path === "/knowledge" || path.startsWith("/knowledge/session/")
+    const isKnowledgePage = path === "/opencode" || path.startsWith("/opencode/session/")
 
     if (embeddedWebUI) return yield* serveEmbeddedUIEffect(path, services.fs, embeddedWebUI)
 

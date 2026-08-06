@@ -20,7 +20,7 @@ const sentry =
     : false
 
 export default defineConfig({
-  base: "/knowledge/",
+  base: "/opencode/",
   plugins: [desktopPlugin, sentry] as any,
   server: {
     host: "0.0.0.0",
@@ -30,7 +30,7 @@ export default defineConfig({
     fs: { strict: false },
     // 开发时 API 代理到后端 4096
     proxy: {
-      "/knowledge/api": "http://127.0.0.1:4096",
+      "/opencode/api": "http://127.0.0.1:4096",
       "/global": "http://127.0.0.1:4096",
       "/provider": "http://127.0.0.1:4096",
       "/project": "http://127.0.0.1:4096",
