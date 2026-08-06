@@ -8,23 +8,17 @@ let embeddedUIPromise: Promise<Record<string, string> | null> | undefined
 
 export const UI_UPSTREAM = new URL("https://app.opencode.ai")
 
-export const csp = (scriptHashes = "") =>
-  `default-src 'self'; script-src 'self' 'wasm-unsafe-eval'${scriptHashes ? ` ${scriptHashes}` : ""}; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; media-src 'self' data:; connect-src * data:`
+export const csp = (hash = "") =>
+  `default-src 'self'; script-src 'self' 'wasm-unsafe-eval'${hash ? ` 'sha256-${hash}'` : ""}; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: blob:; font-src 'self' data:; media-src 'self' data:; connect-src * data: blob:`
 export const DEFAULT_CSP = csp()
 
-export function cspForHtml(body: string) {
-  const hashes = allInlineScriptHashes(body)
-  return csp(hashes.map((h) => `'sha256-${h}'`).join(" "))
+export function themePreloadHash(body: string) {
+  return body.match(/<script\b(?![^>]*\bsrc\s*=)[^>]*\bid=(['"])oc-theme-preload-script\1[^>]*>([\s\S]*?)<\/script>/i)
 }
 
-function allInlineScriptHashes(body: string): string[] {
-  const regex = /<script\b(?![^>]*\bsrc\s*=)[^>]*>([\s\S]*?)<\/script>/gi
-  const hashes: string[] = []
-  let match
-  while ((match = regex.exec(body)) !== null) {
-    hashes.push(createHash("sha256").update(match[1]).digest("base64"))
-  }
-  return hashes
+export function cspForHtml(body: string) {
+  const match = themePreloadHash(body)
+  return csp(match ? createHash("sha256").update(match[2]).digest("base64") : "")
 }
 
 function requestBody(request: HttpServerRequest.HttpServerRequest) {
@@ -81,38 +75,6 @@ export function serveEmbeddedUIEffect(
   )
 }
 
-/** Inject a script into the HTML that sets window.__USER_INFO__ from the /opencode/api/workspaces
- * endpoint, so the KnowledgeHome component can display workspaces without a server-side injection of
- * the global variable. Also extracts the auth token from query params for session links.
- * The Bearer token is passed as a query param because nginx overwrites the Authorization header. */
-function injectKnowledgeUserInfo(body: string, requestUrl: string): string {
-  const url = new URL(requestUrl, "http://localhost")
-  const authParam = url.searchParams.get("Authorization") ?? url.searchParams.get("auth_token") ?? ""
-  const script = `<script>
-;(async function(){
-  try {
-    var params = new URLSearchParams(location.search);
-    var bearer = params.get("Authorization");
-    var apiUrl = bearer
-      ? "/opencode/api/workspaces?Authorization=" + encodeURIComponent(bearer)
-      : "/opencode/api/workspaces";
-    var r = await fetch(apiUrl);
-    if (r.ok) {
-      var d = await r.json();
-      window.__USER_INFO__ = { workspaces: d.data ?? [], nickName: "" };
-    }
-  } catch(e) { console.warn("[knowledge] failed to load workspaces", e); }
-})();
-window.__INITIAL_AUTH_TOKEN__ = window.__INITIAL_AUTH_TOKEN__ || ${JSON.stringify(authParam)};
-</script>`
-  // Inject before </head> if present, otherwise before </body>
-  const headIdx = body.lastIndexOf("</head>")
-  if (headIdx !== -1) return body.slice(0, headIdx) + script + body.slice(headIdx)
-  const bodyIdx = body.lastIndexOf("</body>")
-  if (bodyIdx !== -1) return body.slice(0, bodyIdx) + script + body.slice(bodyIdx)
-  return script + body
-}
-
 export function serveUIEffect(
   request: HttpServerRequest.HttpServerRequest,
   services: { fs: FSUtil.Interface; client: HttpClient.HttpClient; disableEmbeddedWebUi: boolean },
@@ -120,7 +82,6 @@ export function serveUIEffect(
   return Effect.gen(function* () {
     const embeddedWebUI = yield* Effect.promise(() => embeddedUI(services.disableEmbeddedWebUi))
     const path = new URL(request.url, "http://localhost").pathname
-    const isKnowledgePage = path === "/opencode" || path.startsWith("/opencode/session/")
 
     if (embeddedWebUI) return yield* serveEmbeddedUIEffect(path, services.fs, embeddedWebUI)
 
@@ -133,10 +94,7 @@ export function serveUIEffect(
     const headers = proxyResponseHeaders(response.headers)
 
     if (response.headers["content-type"]?.includes("text/html")) {
-      let body = yield* response.text
-      if (isKnowledgePage) {
-        body = injectKnowledgeUserInfo(body, request.url)
-      }
+      const body = yield* response.text
       headers.set("Content-Security-Policy", cspForHtml(body))
       return HttpServerResponse.text(body, { status: response.status, headers })
     }
