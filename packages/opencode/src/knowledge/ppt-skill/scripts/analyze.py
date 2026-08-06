@@ -1,7 +1,61 @@
 #!/usr/bin/env python3
-"""读取 .pptx 的 slide layouts 与占位符目录（不解析正文），stdout 输出 JSON。"""
+"""读取 .pptx 的 slide layouts 目录与原始 slides 设计目录（含可编辑文本形状），stdout 输出 JSON。
+
+输出结构：
+{
+  "layouts": [ {"index", "name", "placeholders": [{"idx","type","name"}]} ],
+  "slides": [
+    {
+      "slideIndex": 0,
+      "layout": "DEFAULT",
+      "shapes": [
+        {"name": "Text 0", "type": "AUTO_SHAPE", "isPlaceholder": false, "text": "当前文本"},
+        {"name": "标题 1", "type": "PLACEHOLDER", "isPlaceholder": true, "placeholderIdx": 0, "text": "当前标题"}
+      ]
+    }
+  ]
+}
+模型据此用 slideIndex + shape 名称/占位符 idx 定位要替换的文本，保证新页保留原设计。
+"""
 import json
 import sys
+
+if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if sys.stderr.encoding and sys.stderr.encoding.lower() != "utf-8":
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
+SHAPE_TYPE_NAMES = {
+    1: "AUTO_SHAPE", 2: "CALL_OUT", 3: "CHART", 4: "COMMENT", 5: "FREEFORM",
+    6: "GROUP", 7: "LINE", 8: "LINK", 9: "MEDIA", 10: "OLE", 11: "PICTURE",
+    12: "PLACEHOLDER", 13: "TABLE", 14: "TEXT_BOX", 15: "WMF",
+}
+
+
+def shape_type_name(shape) -> str:
+    try:
+        return SHAPE_TYPE_NAMES.get(int(shape.shape_type), str(shape.shape_type))
+    except Exception:
+        return "UNKNOWN"
+
+
+def shape_text(shape) -> str:
+    """尽力读取形状文本（含占位符/文本框/自选图形），读取失败返回空串。"""
+    try:
+        if shape.has_text_frame:
+            return shape.text_frame.text.strip()
+    except Exception:
+        pass
+    try:
+        if shape.has_table:
+            rows = []
+            for row in shape.table.rows:
+                cells = [c.text.strip() for c in row.cells]
+                rows.append("|".join(cells))
+            return "\n".join(rows)[:200]
+    except Exception:
+        pass
+    return ""
 
 
 def main() -> None:
@@ -21,7 +75,40 @@ def main() -> None:
                 "name": ph.name,
             })
         layouts.append({"index": i, "name": layout.name, "placeholders": placeholders})
-    print(json.dumps({"layouts": layouts}, ensure_ascii=False))
+
+    slides = []
+    for i, slide in enumerate(prs.slides):
+        shapes = []
+        for s in slide.shapes:
+            item = {
+                "name": s.name,
+                "type": shape_type_name(s),
+                "isPlaceholder": bool(s.is_placeholder),
+            }
+            if s.is_placeholder:
+                try:
+                    item["placeholderIdx"] = s.placeholder_format.idx
+                except Exception:
+                    pass
+            # PICTURE 形状补充尺寸（英寸），模型据此判断插图幅面
+            if str(s.shape_type) == "PICTURE (13)":
+                try:
+                    from pptx.util import Emu
+                    item["widthIn"] = round(Emu(s.width).inches, 2) if s.width else None
+                    item["heightIn"] = round(Emu(s.height).inches, 2) if s.height else None
+                except Exception:
+                    pass
+            text = shape_text(s)
+            if text:
+                item["text"] = text[:200]
+            shapes.append(item)
+        slides.append({
+            "slideIndex": i,
+            "layout": slide.slide_layout.name if slide.slide_layout is not None else "",
+            "shapes": shapes,
+        })
+
+    print(json.dumps({"layouts": layouts, "slides": slides}, ensure_ascii=False))
 
 
 if __name__ == "__main__":
