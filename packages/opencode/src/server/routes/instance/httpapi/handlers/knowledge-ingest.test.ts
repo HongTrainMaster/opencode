@@ -15,12 +15,15 @@ import { KnowledgeSessionHandler } from "./knowledge"
 import { KnowledgeIngestHandler } from "./knowledge-ingest"
 import { KnowledgeGraphHandler } from "./knowledge-graph"
 import { KnowledgeSummaryHandler } from "./knowledge-summary"
+import { PptGenHandler } from "./ppt-gen"
 import { KnowledgeGraphStore } from "@/knowledge/store"
 import { EntityExtractor } from "@/knowledge/entity-extractor"
 import { SummaryWriter } from "@/knowledge/summary-writer"
 import { WikiSessionService } from "@/knowledge/wiki-session"
 import { IngestService } from "@/knowledge/ingest"
 import { IngestJobService, type IngestJobServiceShape } from "@/knowledge/ingest-job"
+import { PptJobService } from "@/knowledge/ppt-job"
+import { PptGenService } from "@/knowledge/ppt-gen"
 import { testEffect } from "@test/lib/effect"
 import { mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -103,6 +106,9 @@ const wikiSessionLayer = WikiSessionService.test(() =>
   Effect.succeed({ status: "SUCCESS" as const, sourcePath: wikiSourcePage }),
 )
 const summaryWriterLayer = SummaryWriter.test(tmpdir())
+const pptGenLayer = PptGenService.test(() =>
+  Effect.succeed({ status: "SUCCESS" as const, outputPath: "/tmp/o.pptx" }),
+)
 
 // ---- 组装 KnowledgeApi（session + ingest 两个 group）----
 const apiLayer = HttpRouter.serve(
@@ -111,6 +117,8 @@ const apiLayer = HttpRouter.serve(
     Layer.provide(KnowledgeIngestHandler),
     Layer.provide(KnowledgeGraphHandler),
     Layer.provide(KnowledgeSummaryHandler),
+    Layer.provide(PptGenHandler),
+    Layer.provide(pptGenLayer),
     Layer.provide(
       IngestService.layer.pipe(
         Layer.provide(graphStoreLayer),
@@ -120,6 +128,7 @@ const apiLayer = HttpRouter.serve(
       ),
     ),
     Layer.provideMerge(IngestJobService.layer.pipe(Layer.provide(graphStoreLayer))),
+    Layer.provideMerge(PptJobService.layer.pipe(Layer.provide(graphStoreLayer))),
     Layer.provide([schemaErrorLayer, mockExternalAuthLayer]),
     HttpRouter.provideRequest(Layer.succeedContext(Context.empty() as Context.Context<never>)),
   ),

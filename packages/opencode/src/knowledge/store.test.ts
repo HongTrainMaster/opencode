@@ -222,4 +222,27 @@ describe("KnowledgeGraphStore", () => {
     )
     expect(relations).toHaveLength(0)
   })
+
+  it("inserts, gets, lists and interrupts ppt jobs", async () => {
+    const result = await run(
+      Effect.gen(function* () {
+        const store = yield* KnowledgeGraphStore
+        yield* store.insertPptJob({ id: "job_ppt1", taskId: "ppt_1", prompt: "做公司介绍", status: "RUNNING" })
+        const job = yield* store.getPptJob("job_ppt1")
+        expect(job?.taskId).toBe("ppt_1")
+        expect(job?.status).toBe("RUNNING")
+        yield* store.updatePptJob({ id: "job_ppt1", status: "SUCCESS", outputPath: "/tmp/o.pptx" })
+        const done = yield* store.getPptJob("job_ppt1")
+        expect(done?.status).toBe("SUCCESS")
+        expect(done?.outputPath).toBe("/tmp/o.pptx")
+        const list = yield* store.listPptJobs(["job_ppt1", "job_ppt_unknown"])
+        expect(list).toHaveLength(1)
+        yield* store.insertPptJob({ id: "job_ppt2", taskId: "ppt_2", prompt: "x", status: "RUNNING" })
+        const interrupted = yield* store.interruptRunningPptJobs()
+        expect(interrupted).toBe(1)
+        return true
+      }),
+    )
+    expect(result).toBe(true)
+  })
 })

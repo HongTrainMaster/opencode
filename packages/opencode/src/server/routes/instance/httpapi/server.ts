@@ -120,6 +120,9 @@ import { SummaryWriter } from "@/knowledge/summary-writer"
 import { WikiSessionService } from "@/knowledge/wiki-session"
 import { IngestService } from "@/knowledge/ingest"
 import { IngestJobService } from "@/knowledge/ingest-job"
+import { PptGenService } from "@/knowledge/ppt-gen"
+import { PptJobService } from "@/knowledge/ppt-job"
+import { PptGenHandler } from "./handlers/ppt-gen"
 import { workspaceHandlers } from "./handlers/workspace"
 import { instanceContextLayer } from "./middleware/instance-context"
 import { workspaceRoutingLayer } from "./middleware/workspace-routing"
@@ -305,6 +308,7 @@ export function createRoutes(
     Layer.provide(KnowledgeIngestHandler),
     Layer.provide(KnowledgeGraphHandler),
     Layer.provide(KnowledgeSummaryHandler),
+    Layer.provide(PptGenHandler),
     Layer.provide(summaryWriterLayer),
     Layer.provide(
       IngestService.layer.pipe(
@@ -319,6 +323,8 @@ export function createRoutes(
         Layer.provide(graphStoreLayer),
       ),
     ),
+    Layer.provide(PptJobService.layer.pipe(Layer.provide(graphStoreLayer))),
+    Layer.provide(PptGenService.layer),
     Layer.provideMerge(graphStoreLayer),
     Layer.provide(externalAuthLayer),
     Layer.provide(KnowledgeAdapterLayer),

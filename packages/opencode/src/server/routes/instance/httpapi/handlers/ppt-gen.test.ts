@@ -18,18 +18,18 @@ import { KnowledgeSummaryHandler } from "./knowledge-summary"
 import { PptGenHandler } from "./ppt-gen"
 import { KnowledgeGraphStore } from "@/knowledge/store"
 import { EntityExtractor } from "@/knowledge/entity-extractor"
+import { SummaryWriter } from "@/knowledge/summary-writer"
+import { WikiSessionService } from "@/knowledge/wiki-session"
 import { IngestService } from "@/knowledge/ingest"
 import { IngestJobService } from "@/knowledge/ingest-job"
-import { WikiSessionService } from "@/knowledge/wiki-session"
-import { SummaryWriter } from "@/knowledge/summary-writer"
 import { PptJobService } from "@/knowledge/ppt-job"
 import { PptGenService } from "@/knowledge/ppt-gen"
-import { mkdtempSync, readFileSync, existsSync } from "node:fs"
+import { testEffect } from "@test/lib/effect"
+import { writeFileSync, mkdirSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { testEffect } from "@test/lib/effect"
 
-// ---- mock session（复刻自 knowledge.test.ts）----
+// ---- mock session（复刻自 knowledge-ingest.test.ts）----
 const now = DateTime.makeUnsafe(Date.now())
 const mockSessionOwned = SessionSchema.Info.make({
   id: SessionV2.ID.make("ses_owned"),
@@ -45,7 +45,10 @@ const mockSessionLayer = Layer.succeed(
   SessionV2.Service,
   SessionV2.Service.of({
     list: () => Effect.succeed([mockSessionOwned]),
-    get: () => Effect.fail(new SessionV2.NotFoundError({ sessionID: SessionV2.ID.make("x") })),
+    get: (id) =>
+      id === "ses_owned"
+        ? Effect.succeed(mockSessionOwned)
+        : Effect.fail(new SessionV2.NotFoundError({ sessionID: id })),
     create: () => Effect.succeed(mockSessionOwned),
     messages: () => Effect.die("not implemented") as any,
     message: () => Effect.die("not implemented") as any,
@@ -74,29 +77,26 @@ const testIdentity = ExternalIdentityInfo.make({
   userId: "user_1",
   nickName: "Test User",
   tenantId: "tenant_01",
-  workspaces: [{ workspaceId: "ws_1", workspaceName: "Workspace 1", categories: [] }],
+  workspaces: [{ workspaceId: "ws_1", workspaceName: "Workspace 1", llmPath: "/tmp", categories: [] }],
   permissions: {},
 })
 const mockExternalAuthLayer = Layer.succeed(ExternalAuth, ExternalAuth.of((effect: any) => effect))
 const mockIdentityLayer = Layer.succeed(ExternalIdentity, testIdentity)
-
-// ---- 每个测试独立 tmpdir（写摘要不串数据）----
-// SummaryWriter.test(root) 把 root 当作目标目录根；请求里的 llmPath 与它保持一致，
-// 这样 writer 写到的 wiki/sources 与 handler 读取的路径是同一个。
-const summaryDir = mkdtempSync(join(tmpdir(), "summary-test-"))
-const llmPath = join(summaryDir, "kb_1")
-const summaryWriterLayer = SummaryWriter.test(llmPath)
-const pptGenLayer = PptGenService.test(() =>
-  Effect.succeed({ status: "SUCCESS" as const, outputPath: "/tmp/o.pptx" }),
-)
-
 const graphStoreLayer = KnowledgeGraphStore.test(":memory:")
-const extractorLayer = EntityExtractor.test(({ title }) =>
-  Effect.succeed({ entities: [{ name: title, type: "文档" }], relations: [] }),
-)
-const wikiSessionLayer = WikiSessionService.test(() => Effect.succeed({ status: "SUCCESS" as const }))
+const summaryWriterLayer = SummaryWriter.test(tmpdir())
 
-// KnowledgeApi 含 session + ingest + graph + summary 四个 group，须提供全部四个 handler
+// 真实 PptJobService（内存 store）+ 注入 PptGenService 测试实现（真实跑 build.py 太慢，这里直接给 SUCCESS）
+const tmpOut = join(tmpdir(), "ppt-gen-test-output.pptx")
+const pptGenLayer = PptGenService.test(() =>
+  Effect.gen(function* () {
+    yield* Effect.sync(() => {
+      mkdirSync(tmpdir(), { recursive: true })
+      writeFileSync(tmpOut, Buffer.from("FAKE-PPTX"))
+    })
+    return { status: "SUCCESS" as const, outputPath: tmpOut }
+  }),
+)
+
 const apiLayer = HttpRouter.serve(
   HttpApiBuilder.layer(KnowledgeApi).pipe(
     Layer.provide(KnowledgeSessionHandler),
@@ -108,20 +108,20 @@ const apiLayer = HttpRouter.serve(
     Layer.provide(
       IngestService.layer.pipe(
         Layer.provide(graphStoreLayer),
-        Layer.provide(extractorLayer),
-        Layer.provide(wikiSessionLayer),
+        Layer.provide(EntityExtractor.test(({ title }) => Effect.succeed({ entities: [], relations: [] }))),
         Layer.provide(summaryWriterLayer),
+        Layer.provide(WikiSessionService.test(() => Effect.succeed({ status: "SUCCESS" as const, sourcePath: "" }))),
       ),
     ),
-    Layer.provide(IngestJobService.layer.pipe(Layer.provide(graphStoreLayer))),
+    Layer.provideMerge(IngestJobService.layer.pipe(Layer.provide(graphStoreLayer))),
     Layer.provideMerge(PptJobService.layer.pipe(Layer.provide(graphStoreLayer))),
-    Layer.provide(summaryWriterLayer),
     Layer.provide([schemaErrorLayer, mockExternalAuthLayer]),
     HttpRouter.provideRequest(Layer.succeedContext(Context.empty() as Context.Context<never>)),
   ),
   { disableListenLog: true, disableLogger: true },
 ).pipe(
   Layer.provideMerge(graphStoreLayer),
+  Layer.provideMerge(summaryWriterLayer),
   Layer.provideMerge(layerWebSocketConstructorGlobal),
   Layer.provideMerge(NodeHttpServer.layerTest),
   Layer.provideMerge(NodeServices.layer),
@@ -130,80 +130,87 @@ const apiLayer = HttpRouter.serve(
 )
 const it = testEffect(apiLayer)
 
-describe("Knowledge Summary HttpApi", () => {
-  it.live("reads a missing summary as exists=false", () =>
+describe("Knowledge Ppt HttpApi", () => {
+  it.live("submits a ppt gen task via POST /serve/api/ppt/gen and resolves to SUCCESS", () =>
     Effect.gen(function* () {
-      const response = yield* HttpClientRequest.get("/serve/api/summary")
-        .pipe(HttpClientRequest.setUrl(`/serve/api/summary?llmPath=${encodeURIComponent(llmPath)}&documentId=10001`), HttpClient.execute)
-      expect(response.status).toBe(200)
-      const body = (yield* response.json) as any
-      expect(body.exists).toBe(false)
-      expect(body.content).toBeNull()
-    }),
-  )
-
-  it.live("writes and then reads back the summary", () =>
-    Effect.gen(function* () {
-      const writeResp = yield* HttpClientRequest.post("/serve/api/summary").pipe(
+      const jobService = yield* PptJobService
+      const response = yield* HttpClientRequest.post("/serve/api/ppt/gen").pipe(
         HttpClientRequest.setBody(
           HttpBody.jsonUnsafe({
-            llmPath,
-            documentId: "10001",
-            title: "考勤制度",
-            markdown: "# 考勤制度\n\n> 一句话核心观点\n\n## 核心观点\n\n- 要点一",
+            taskId: "ppt_10001",
+            prompt: "做一个公司介绍",
+            style: {
+              fileName: "template.pptx",
+              fileContent: Buffer.from("stub").toString("base64"),
+            },
           }),
         ),
         HttpClient.execute,
       )
-      expect(writeResp.status).toBe(200)
-      const writeBody = (yield* writeResp.json) as any
-      expect(writeBody.documentId).toBe("10001")
-      expect(writeBody.status).toBe("SUCCESS")
-
-      const readResp = yield* HttpClientRequest.get("/serve/api/summary")
-        .pipe(HttpClientRequest.setUrl(`/serve/api/summary?llmPath=${encodeURIComponent(llmPath)}&documentId=10001`), HttpClient.execute)
-      const readBody = (yield* readResp.json) as any
-      expect(readBody.exists).toBe(true)
-      expect(readBody.content).toContain("一句话核心观点")
-      expect(readBody.content).toContain("type: summary") // frontmatter 由 SummaryWriter 补
+      expect(response.status).toBe(200)
+      const body = (yield* response.json) as any
+      expect(body.code).toBe(200)
+      expect(body.data[0].taskId).toBe("ppt_10001")
+      expect(body.data[0].status).toBe("RUNNING")
+      expect(body.data[0].jobId).toBeTruthy()
+      const jobId = body.data[0].jobId
+      // 轮询终态
+      let job: any
+      for (let i = 0; i < 100; i++) {
+        job = yield* jobService.get(jobId)
+        if (job && job.status !== "RUNNING") break
+        yield* Effect.sleep("10 millis")
+      }
+      expect(job?.status).toBe("SUCCESS")
+      expect(job?.outputPath).toBe(tmpOut)
     }),
   )
 
-  it.live("overwrites an existing summary", () =>
+  it.live("GET /serve/api/ppt/jobs/:jobId returns the job status", () =>
     Effect.gen(function* () {
-      yield* HttpClientRequest.post("/serve/api/summary").pipe(
-        HttpClientRequest.setBody(
-          HttpBody.jsonUnsafe({ llmPath, documentId: "10001", title: "考勤制度", markdown: "旧版" }),
-        ),
-        HttpClient.execute,
-      )
-      const resp = yield* HttpClientRequest.post("/serve/api/summary").pipe(
-        HttpClientRequest.setBody(
-          HttpBody.jsonUnsafe({ llmPath, documentId: "10001", title: "考勤制度", markdown: "新版" }),
-        ),
-        HttpClient.execute,
-      )
-      const body = (yield* resp.json) as any
-      expect(body.status).toBe("SUCCESS")
-      const file = readFileSync(join(llmPath, "wiki", "sources", "10001.md"), "utf-8")
-      expect(file).toContain("新版")
-      expect(file).not.toContain("旧版")
+      const jobService = yield* PptJobService
+      const jobId = yield* jobService.start({
+        taskId: "ppt_2",
+        prompt: "x",
+        run: Effect.succeed({ outputPath: "/tmp/o.pptx" }),
+      })
+      for (let i = 0; i < 100; i++) {
+        const j = yield* jobService.get(jobId)
+        if (j && j.status !== "RUNNING") break
+        yield* Effect.sleep("10 millis")
+      }
+      const response = yield* HttpClientRequest.get(`/serve/api/ppt/jobs/${jobId}`).pipe(HttpClient.execute)
+      expect(response.status).toBe(200)
+      const body = (yield* response.json) as any
+      expect(body.data.taskId).toBe("ppt_2")
+      expect(body.data.status).toBe("SUCCESS")
     }),
   )
 
-  it.live("sanitizes documentId against path traversal", () =>
+  it.live("GET /serve/api/ppt/file/:jobId returns bytes when SUCCESS", () =>
     Effect.gen(function* () {
-      const resp = yield* HttpClientRequest.post("/serve/api/summary").pipe(
-        HttpClientRequest.setBody(
-          HttpBody.jsonUnsafe({ llmPath, documentId: "../evil", title: "t", markdown: "x" }),
-        ),
-        HttpClient.execute,
-      )
-      expect(resp.status).toBe(200)
-      const body = (yield* resp.json) as any
-      expect(body.status).toBe("SUCCESS")
-      // sanitizeDocumentId("../evil") → "___evil"（. 与 / 都替换为 _）；不会写到 llmPath 之外的目录
-      expect(existsSync(join(llmPath, "wiki", "sources", "___evil.md"))).toBe(true)
+      const jobService = yield* PptJobService
+      const jobId = yield* jobService.start({
+        taskId: "ppt_3",
+        prompt: "x",
+        run: Effect.succeed({ outputPath: tmpOut }),
+      })
+      for (let i = 0; i < 100; i++) {
+        const j = yield* jobService.get(jobId)
+        if (j && j.status !== "RUNNING") break
+        yield* Effect.sleep("10 millis")
+      }
+      const response = yield* HttpClientRequest.get(`/serve/api/ppt/file/${jobId}`).pipe(HttpClient.execute)
+      expect(response.status).toBe(200)
+      const body = yield* response.text
+      expect(body).toBe("FAKE-PPTX")
+    }),
+  )
+
+  it.live("GET /serve/api/ppt/file/:jobId returns 404 for unknown job", () =>
+    Effect.gen(function* () {
+      const response = yield* HttpClientRequest.get("/serve/api/ppt/file/job_unknown").pipe(HttpClient.execute)
+      expect(response.status).toBe(404)
     }),
   )
 })

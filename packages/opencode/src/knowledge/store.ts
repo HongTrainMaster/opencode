@@ -61,6 +61,18 @@ export interface IngestJobRow {
   updatedAt: string
 }
 
+/** PPT 生成任务行（ppt_gen_job）。status: RUNNING | SUCCESS | FAILED | INTERRUPTED */
+export interface PptJobRow {
+  id: string
+  taskId: string
+  prompt: string
+  status: "RUNNING" | "SUCCESS" | "FAILED" | "INTERRUPTED"
+  outputPath: string | null
+  error: string | null
+  createdAt: string
+  updatedAt: string
+}
+
 export interface KnowledgeGraphStoreShape {
   readonly migrate: Effect.Effect<void>
   readonly replaceDocumentGraph: (args: ReplaceDocumentGraphArgs) => Effect.Effect<ReplaceDocumentResult>
@@ -88,6 +100,21 @@ export interface KnowledgeGraphStoreShape {
   readonly listIngestJobs: (ids: string[]) => Effect.Effect<IngestJobRow[]>
   /** 重启兜底：把遗留 RUNNING 记录标记为 INTERRUPTED（幂等）。返回受影响行数 */
   readonly interruptRunningIngestJobs: () => Effect.Effect<number>
+  readonly insertPptJob: (row: {
+    id: string
+    taskId: string
+    prompt: string
+    status: "RUNNING"
+  }) => Effect.Effect<void>
+  readonly updatePptJob: (args: {
+    id: string
+    status?: "SUCCESS" | "FAILED"
+    outputPath?: string | null
+    error?: string | null
+  }) => Effect.Effect<void>
+  readonly getPptJob: (id: string) => Effect.Effect<PptJobRow | undefined>
+  readonly listPptJobs: (ids: string[]) => Effect.Effect<PptJobRow[]>
+  readonly interruptRunningPptJobs: () => Effect.Effect<number>
   readonly listEntitiesByDocument: (args: { documentId: string; userId: string }) => Effect.Effect<GraphEntity[]>
   readonly listEntitiesByWorkspace: (args: { workspaceId: string; userId: string }) => Effect.Effect<GraphEntity[]>
   readonly listRelationsByWorkspace: (args: { workspaceId: string; userId: string }) => Effect.Effect<GraphRelation[]>
@@ -188,6 +215,19 @@ function makeStore(filename: string): KnowledgeGraphStoreShape {
       )
     `)
     db.run("CREATE INDEX IF NOT EXISTS idx_kg_ingest_job_status ON kg_ingest_job(status)")
+    db.run(`
+      CREATE TABLE IF NOT EXISTS ppt_gen_job (
+        id TEXT PRIMARY KEY,
+        task_id TEXT NOT NULL,
+        prompt TEXT NOT NULL,
+        status TEXT NOT NULL,
+        output_path TEXT,
+        error TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    `)
+    db.run("CREATE INDEX IF NOT EXISTS idx_ppt_gen_job_status ON ppt_gen_job(status)")
   }
   migrate()
 
@@ -226,6 +266,17 @@ function makeStore(filename: string): KnowledgeGraphStoreShape {
     entities: row.entities,
     relations: row.relations,
     summary: row.summary,
+    error: row.error,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  })
+
+  const rowToPptJob = (row: any): PptJobRow => ({
+    id: row.id,
+    taskId: row.task_id,
+    prompt: row.prompt,
+    status: row.status,
+    outputPath: row.output_path,
     error: row.error,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -296,6 +347,67 @@ function makeStore(filename: string): KnowledgeGraphStoreShape {
         const r = db
           .prepare(
             "UPDATE kg_ingest_job SET status = 'INTERRUPTED', updated_at = ? WHERE status = 'RUNNING'",
+          )
+          .run(ts)
+        return r.changes
+      }),
+
+    insertPptJob: (row) =>
+      Effect.sync(() => {
+        db.prepare(
+          `INSERT INTO ppt_gen_job
+            (id, task_id, prompt, status, output_path, error, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        ).run(
+          row.id,
+          row.taskId,
+          row.prompt,
+          row.status,
+          null,
+          null,
+          now(),
+          now(),
+        )
+      }),
+
+    updatePptJob: (args) =>
+      Effect.sync(() => {
+        db.prepare(
+          `UPDATE ppt_gen_job
+           SET status = ?, output_path = ?, error = ?, updated_at = ?
+           WHERE id = ?`,
+        ).run(
+          args.status ?? "FAILED",
+          args.outputPath ?? null,
+          args.error ?? null,
+          now(),
+          args.id,
+        )
+      }),
+
+    getPptJob: (id) =>
+      Effect.sync(() => {
+        const row = db.prepare("SELECT * FROM ppt_gen_job WHERE id = ?").get(id) as any | undefined
+        return row ? rowToPptJob(row) : undefined
+      }),
+
+    listPptJobs: (ids) =>
+      Effect.sync(() => {
+        if (ids.length === 0) return []
+        const ph = ids.map(() => "?").join(",")
+        const rows = db
+          .prepare(`SELECT * FROM ppt_gen_job WHERE id IN (${ph})`)
+          .all(...ids) as Array<any>
+        const byId = new Map(rows.map((r) => [r.id, rowToPptJob(r)]))
+        return ids.map((id) => byId.get(id)).filter((r): r is PptJobRow => r !== undefined)
+      }),
+
+    interruptRunningPptJobs: () =>
+      Effect.sync(() => {
+        const ts = now()
+        const r = db
+          .prepare(
+            "UPDATE ppt_gen_job SET status = 'INTERRUPTED', updated_at = ? WHERE status = 'RUNNING'",
           )
           .run(ts)
         return r.changes

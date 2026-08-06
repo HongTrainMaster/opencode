@@ -5,6 +5,7 @@ import {
   KnowledgeSessionGroup,
   KnowledgeSummaryGroup,
 } from "@opencode-ai/protocol/groups/knowledge"
+import { KnowledgePptGroup } from "@opencode-ai/protocol/groups/ppt"
 import { ExternalAuth } from "@opencode-ai/server/middleware/external-auth"
 import { SchemaErrorMiddleware } from "../middleware/schema-error"
 
@@ -13,6 +14,7 @@ export const KnowledgeApi = HttpApi.make("opencode-knowledge")
   .add(KnowledgeIngestGroup)
   .add(KnowledgeGraphGroup)
   .add(KnowledgeSummaryGroup)
+  .add(KnowledgePptGroup)
   .middleware(ExternalAuth)
   .middleware(SchemaErrorMiddleware)
   .annotateMerge(
