@@ -25,16 +25,29 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
 if sys.stderr.encoding and sys.stderr.encoding.lower() != "utf-8":
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
+# python-pptx MSO_SHAPE_TYPE 枚举（Python-pptx 1.0.2）
+# 13=PICTURE, 14=PLACEHOLDER, 17=TABLE, 19=CHART ... 以 python-pptx 实际值为准
 SHAPE_TYPE_NAMES = {
     1: "AUTO_SHAPE", 2: "CALL_OUT", 3: "CHART", 4: "COMMENT", 5: "FREEFORM",
-    6: "GROUP", 7: "LINE", 8: "LINK", 9: "MEDIA", 10: "OLE", 11: "PICTURE",
-    12: "PLACEHOLDER", 13: "TABLE", 14: "TEXT_BOX", 15: "WMF",
+    6: "GROUP", 7: "LINE", 8: "LINK", 9: "MEDIA", 10: "OLE", 12: "TEXT_BOX",
+    13: "PICTURE", 14: "PLACEHOLDER", 17: "TABLE", 18: "SMART_ART", 19: "CHART",
+    20: "VIDEO", 21: "INK", 22: "CONTENT_APP", 23: "DIAGRAM", 24: "SCRIPT_BUTTON",
 }
 
 
 def shape_type_name(shape) -> str:
     try:
-        return SHAPE_TYPE_NAMES.get(int(shape.shape_type), str(shape.shape_type))
+        # shape.shape_type 是 MSO_SHAPE_TYPE 枚举，int() 取其数值；映射失败回落 str() 的 "PICTURE (13)" 形式
+        mapped = SHAPE_TYPE_NAMES.get(int(shape.shape_type))
+        if mapped:
+            return mapped
+        s = str(shape.shape_type)
+        # 兜底：从 "PICTURE (13)" 提取类型名
+        if s.startswith("PICTURE"):
+            return "PICTURE"
+        if s.startswith("TABLE"):
+            return "TABLE"
+        return s
     except Exception:
         return "UNKNOWN"
 

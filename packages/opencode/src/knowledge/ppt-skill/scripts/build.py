@@ -93,6 +93,19 @@ def _replace_slide_texts(slide, texts: dict, placeholders: list) -> int:
     return filled
 
 
+def _is_picture_shape(shape) -> bool:
+    """判断形状是否为图片：优先按 python-pptx 枚举值 13(PICTURE)，兜底检查 XML 是否含 a:blip。"""
+    try:
+        if int(shape.shape_type) == 13:
+            return True
+    except Exception:
+        pass
+    try:
+        return "a:blip" in shape._element.xml
+    except Exception:
+        return False
+
+
 def _replace_slide_images(slide, images: dict, page_index: int) -> int:
     """按名称生成图片并替换 slide 中的 PICTURE 形状（保留位置/尺寸）。返回替换成功数。"""
     replaced = 0
@@ -101,8 +114,8 @@ def _replace_slide_images(slide, images: dict, page_index: int) -> int:
         prompt = images.get(name)
         if not prompt:
             continue
-        # 仅处理图片类形状
-        if not shape.shape_type == 13:  # MSO_SHAPE_TYPE.PICTURE
+        # 仅处理图片类形状（枚举 13 或 XML 含 blip）
+        if not _is_picture_shape(shape):
             print(f"[img] 跳过非图片形状 '{name}' (type={shape.shape_type})", flush=True)
             continue
         out_png = os.path.join(WORK_DIR, f".ppt-images/page{page_index}-{name}.png")
