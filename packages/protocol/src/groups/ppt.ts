@@ -25,6 +25,19 @@ export const PptGenSubmitItem = Schema.Struct({
   status: Schema.Literal("RUNNING"),
 })
 
+// --- 封面渲染 ---
+
+export const PptRenderCoverPayload = Schema.Struct({
+  /** 业务端任务ID（Java 侧雪花ID，如 "cover_xxx"），回传用 */
+  taskId: Schema.String,
+  style: PptStyle,
+})
+
+export const PptRenderCoverSubmitResponse = Schema.Struct({
+  code: Schema.Number,
+  data: Schema.Array(PptGenSubmitItem),
+})
+
 export const PptGenSubmitResponse = Schema.Struct({
   code: Schema.Number,
   data: Schema.Array(PptGenSubmitItem),
@@ -73,6 +86,17 @@ export const KnowledgePptGroup = HttpApiGroup.make("knowledge.ppt")
       OpenApi.annotations({
         identifier: "knowledge.ppt.gen",
         summary: "Submit a PPT generation task (style layout reuse + prompt)",
+      }),
+    ),
+  )
+  .add(
+    HttpApiEndpoint.post("renderCover", `${root}/ppt/render-cover`, {
+      payload: PptRenderCoverPayload,
+      success: PptRenderCoverSubmitResponse,
+    }).annotateMerge(
+      OpenApi.annotations({
+        identifier: "knowledge.ppt.render-cover",
+        summary: "Submit a PPT cover render task (first slide → PNG via LibreOffice)",
       }),
     ),
   )
