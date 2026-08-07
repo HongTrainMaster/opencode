@@ -9,6 +9,9 @@ import { PptJobService } from "@/knowledge/ppt-job"
 import type { PptJobRow } from "@/knowledge/store"
 import { KnowledgeApi } from "../groups/knowledge"
 
+/** taskId 由业务端（Java 雪花ID）生成，仅允许安全文件名字符，防止路径穿越逃逸工作区 */
+const TASK_ID_RE = /^[A-Za-z0-9._-]+$/
+
 /** 契约字段 jobId = 库表 PptJobRow.id */
 const toJobResult = (row: PptJobRow) => ({
   jobId: row.id,
@@ -43,6 +46,10 @@ export const PptGenHandler = HttpApiBuilder.group(
             }
             if (!taskId || !prompt || !style.fileName || !style.fileContent) {
               yield* Effect.logWarning("ppt gen rejected 400", { taskId })
+              return HttpServerResponse.empty({ status: 400 })
+            }
+            if (!TASK_ID_RE.test(taskId)) {
+              yield* Effect.logWarning("ppt gen rejected 400", { taskId, reason: "invalid taskId" })
               return HttpServerResponse.empty({ status: 400 })
             }
 
@@ -80,6 +87,10 @@ export const PptGenHandler = HttpApiBuilder.group(
             }
             if (!taskId || !style.fileName || !style.fileContent) {
               yield* Effect.logWarning("ppt cover rejected 400", { taskId })
+              return HttpServerResponse.empty({ status: 400 })
+            }
+            if (!TASK_ID_RE.test(taskId)) {
+              yield* Effect.logWarning("ppt cover rejected 400", { taskId, reason: "invalid taskId" })
               return HttpServerResponse.empty({ status: 400 })
             }
 
@@ -143,11 +154,13 @@ export const PptGenHandler = HttpApiBuilder.group(
             }).pipe(
               Effect.match({
                 onFailure: () => HttpServerResponse.empty({ status: 500 }),
-                onSuccess: (bytes) =>
-                  HttpServerResponse.uint8Array(bytes, {
-                    contentType:
-                      "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-                  }),
+                onSuccess: (bytes) => {
+                  // 该端点同时服务 .pptx（gen）与 .png（cover），content-type 按扩展名区分
+                  const contentType = outputPath.endsWith(".png")
+                    ? "image/png"
+                    : "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+                  return HttpServerResponse.uint8Array(bytes, { contentType })
+                },
               }),
             )
           }),

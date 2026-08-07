@@ -1,7 +1,19 @@
 import { Context, Effect, Layer, Semaphore } from "effect"
 import { existsSync, mkdirSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
-import { spawnSync } from "node:child_process"
+import { execFile } from "node:child_process"
+import { promisify } from "node:util"
+
+/** taskId 由业务端（Java 雪花ID）生成，仅允许安全文件名字符，防止路径穿越逃逸工作区 */
+const TASK_ID_RE = /^[A-Za-z0-9._-]+$/
+
+function assertValidTaskId(taskId: string): void {
+  if (!TASK_ID_RE.test(taskId)) {
+    throw new Error(`invalid taskId: ${JSON.stringify(taskId)}`)
+  }
+}
+
+const execFileAsync = promisify(execFile)
 
 export interface PptCoverRunResult {
   status: "SUCCESS" | "FAILED"
@@ -55,6 +67,9 @@ function runPptCover(args: {
   return Effect.gen(function* () {
     yield* Effect.logInfo("ppt cover start", { taskId: args.taskId })
 
+    // 防御：taskId 参与 workdir 拼路径，先校验字符集，非法直接失败
+    yield* Effect.sync(() => assertValidTaskId(args.taskId))
+
     // 任务隔离子目录：cover-root/{taskId}/
     const workdir = join(coverRoot(), args.taskId)
     yield* Effect.sync(() => mkdirSync(workdir, { recursive: true }))
@@ -69,11 +84,15 @@ function runPptCover(args: {
 
     const coverPath = join(workdir, "cover.png")
     const script = join(skillDir(), "scripts", "render_cover.py")
-    const r = yield* Effect.sync(() =>
-      spawnSync("python3", [script, stylePath, coverPath], { encoding: "utf-8", timeout: 240_000 }),
-    )
-    if (r.status !== 0 || !existsSync(coverPath)) {
-      const msg = `render_cover failed: ${(r.error?.message ?? r.stderr ?? r.stdout ?? "").trim() || "no cover.png written"}`
+    // 异步 spawn：非零退出/找不到二进制会 reject（Error 携带 stderr），交给外层 catch 转 FAILED；
+    // 这里不阻塞事件循环，让并发信号量真正限制同时运行的 soffice 进程数。
+    yield* Effect.tryPromise({
+      try: () => execFileAsync("python3", [script, stylePath, coverPath], { timeout: 240_000 }),
+      catch: (e) => new Error(e instanceof Error ? e.message : String(e)),
+    })
+    // python 可能以 0 退出但未写出文件，单独兜底
+    if (!existsSync(coverPath)) {
+      const msg = "render_cover finished but no cover.png written"
       yield* Effect.logWarning("ppt cover failed", { taskId: args.taskId, error: msg })
       return { status: "FAILED" as const, error: msg }
     }

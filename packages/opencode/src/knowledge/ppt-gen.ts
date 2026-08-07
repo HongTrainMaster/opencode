@@ -54,6 +54,15 @@ const HEADLESS_RULESET: PermissionV1.Ruleset = [
   { permission: "plan_exit", action: "deny", pattern: "*" },
 ]
 
+/** taskId 由业务端（Java 雪花ID）生成，仅允许安全文件名字符，防止路径穿越逃逸工作区 */
+const TASK_ID_RE = /^[A-Za-z0-9._-]+$/
+
+function assertValidTaskId(taskId: string): void {
+  if (!TASK_ID_RE.test(taskId)) {
+    throw new Error(`invalid taskId: ${JSON.stringify(taskId)}`)
+  }
+}
+
 /** PPT 任务工作区根目录（服务端路径），可用环境变量覆盖 */
 function pptRoot(): string {
   return process.env.PPT_GEN_ROOT ?? join(process.env.XDG_DATA_HOME ?? join(process.cwd(), ".opencode"), "ppt-gen")
@@ -96,6 +105,9 @@ function runPptGen(
 ): Effect.Effect<PptGenRunResult> {
   return Effect.gen(function* () {
     yield* Effect.logInfo("ppt gen start", { taskId: args.taskId, model: PPT_MODEL })
+
+    // 防御：taskId 参与 workdir 拼路径，先校验字符集，非法直接失败
+    yield* Effect.sync(() => assertValidTaskId(args.taskId))
 
     // 任务隔离子目录：ppt-root/{taskId}/
     const workdir = join(pptRoot(), args.taskId)

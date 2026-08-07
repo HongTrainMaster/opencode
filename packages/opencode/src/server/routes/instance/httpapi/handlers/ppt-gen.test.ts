@@ -207,6 +207,7 @@ describe("Knowledge Ppt HttpApi", () => {
       }
       const response = yield* HttpClientRequest.get(`/serve/api/ppt/file/${jobId}`).pipe(HttpClient.execute)
       expect(response.status).toBe(200)
+      expect(response.headers["content-type"]).toContain("presentationml")
       const body = yield* response.text
       expect(body).toBe("FAKE-PPTX")
     }),
@@ -244,6 +245,61 @@ describe("Knowledge Ppt HttpApi", () => {
         yield* Effect.sleep("10 millis")
       }
       expect(job?.status).toBe("SUCCESS")
+    }),
+  )
+
+  it.live("POST /serve/api/ppt/gen with invalid taskId returns 400", () =>
+    Effect.gen(function* () {
+      const response = yield* HttpClientRequest.post("/serve/api/ppt/gen").pipe(
+        HttpClientRequest.setBody(
+          HttpBody.jsonUnsafe({
+            taskId: "../../../etc/evil",
+            prompt: "x",
+            style: { fileName: "a.pptx", fileContent: Buffer.from("stub").toString("base64") },
+          }),
+        ),
+        HttpClient.execute,
+      )
+      expect(response.status).toBe(400)
+    }),
+  )
+
+  it.live("POST /serve/api/ppt/render-cover with invalid taskId returns 400", () =>
+    Effect.gen(function* () {
+      const response = yield* HttpClientRequest.post("/serve/api/ppt/render-cover").pipe(
+        HttpClientRequest.setBody(
+          HttpBody.jsonUnsafe({
+            taskId: "../../../etc/evil",
+            style: { fileName: "a.pptx", fileContent: Buffer.from("stub").toString("base64") },
+          }),
+        ),
+        HttpClient.execute,
+      )
+      expect(response.status).toBe(400)
+    }),
+  )
+
+  it.live("GET /serve/api/ppt/file/:jobId serves a .png artifact as image/png", () =>
+    Effect.gen(function* () {
+      const jobService = yield* PptJobService
+      const tmpPng = join(tmpdir(), "ppt-gen-test-output.png")
+      yield* Effect.sync(() => {
+        mkdirSync(tmpdir(), { recursive: true })
+        writeFileSync(tmpPng, Buffer.from("FAKE-PNG"))
+      })
+      const jobId = yield* jobService.start({
+        taskId: "cover_png",
+        prompt: "x",
+        run: Effect.succeed({ outputPath: tmpPng }),
+      })
+      for (let i = 0; i < 100; i++) {
+        const j = yield* jobService.get(jobId)
+        if (j && j.status !== "RUNNING") break
+        yield* Effect.sleep("10 millis")
+      }
+      const response = yield* HttpClientRequest.get(`/serve/api/ppt/file/${jobId}`).pipe(HttpClient.execute)
+      expect(response.status).toBe(200)
+      expect(response.headers["content-type"]).toContain("image/png")
     }),
   )
 })
