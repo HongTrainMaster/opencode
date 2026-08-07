@@ -6,19 +6,20 @@ import { readFileSync } from "node:fs"
 import { PptGenService } from "@/knowledge/ppt-gen"
 import { PptCoverService } from "@/knowledge/ppt-cover"
 import { PptJobService } from "@/knowledge/ppt-job"
-import type { PptJobRow } from "@/knowledge/store"
+import type { PptJobWithProgress } from "@/knowledge/ppt-job"
 import { KnowledgeApi } from "../groups/knowledge"
 
 /** taskId 由业务端（Java 雪花ID）生成，仅允许安全文件名字符，防止路径穿越逃逸工作区 */
 const TASK_ID_RE = /^[A-Za-z0-9._-]+$/
 
 /** 契约字段 jobId = 库表 PptJobRow.id */
-const toJobResult = (row: PptJobRow) => ({
+const toJobResult = (row: PptJobWithProgress) => ({
   jobId: row.id,
   taskId: row.taskId,
   status: row.status,
   outputPath: row.outputPath ?? undefined,
   error: row.error ?? undefined,
+  progress: row.progress,
   createdAt: row.createdAt,
   updatedAt: row.updatedAt,
 })

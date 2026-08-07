@@ -24,6 +24,7 @@ import { IngestService } from "@/knowledge/ingest"
 import { IngestJobService, type IngestJobServiceShape } from "@/knowledge/ingest-job"
 import { PptJobService } from "@/knowledge/ppt-job"
 import { PptGenService } from "@/knowledge/ppt-gen"
+import { PptCoverService } from "@/knowledge/ppt-cover"
 import { testEffect } from "@test/lib/effect"
 import { mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -109,6 +110,9 @@ const summaryWriterLayer = SummaryWriter.test(tmpdir())
 const pptGenLayer = PptGenService.test(() =>
   Effect.succeed({ status: "SUCCESS" as const, outputPath: "/tmp/o.pptx" }),
 )
+const pptCoverLayer = PptCoverService.test(() =>
+  Effect.succeed({ status: "SUCCESS" as const, outputPath: "/tmp/o.pptx" }),
+)
 
 // ---- 组装 KnowledgeApi（session + ingest 两个 group）----
 const apiLayer = HttpRouter.serve(
@@ -119,6 +123,7 @@ const apiLayer = HttpRouter.serve(
     Layer.provide(KnowledgeSummaryHandler),
     Layer.provide(PptGenHandler),
     Layer.provide(pptGenLayer),
+    Layer.provide(pptCoverLayer),
     Layer.provide(
       IngestService.layer.pipe(
         Layer.provide(graphStoreLayer),

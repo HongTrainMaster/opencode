@@ -18,12 +18,26 @@
 模型据此用 slideIndex + shape 名称/占位符 idx 定位要替换的文本，保证新页保留原设计。
 """
 import json
+import os
 import sys
 
 if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 if sys.stderr.encoding and sys.stderr.encoding.lower() != "utf-8":
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
+WORK_DIR = os.environ.get("PPT_WORK_DIR", os.getcwd())
+
+
+def write_progress(payload: dict) -> None:
+    """把进度写入 workdir 下 output/progress.json（尽力而为）。"""
+    try:
+        out_dir = os.path.join(WORK_DIR, "output")
+        os.makedirs(out_dir, exist_ok=True)
+        with open(os.path.join(out_dir, "progress.json"), "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False)
+    except Exception:
+        pass
 
 # python-pptx MSO_SHAPE_TYPE 枚举（Python-pptx 1.0.2）
 # 13=PICTURE, 14=PLACEHOLDER, 17=TABLE, 19=CHART ... 以 python-pptx 实际值为准
@@ -122,6 +136,9 @@ def main() -> None:
         })
 
     print(json.dumps({"layouts": layouts, "slides": slides}, ensure_ascii=False))
+
+    # 分析完成：写进度文件（totalSlides = 模板原始页数）
+    write_progress({"stage": "ANALYZED", "totalSlides": len(prs.slides)})
 
 
 if __name__ == "__main__":

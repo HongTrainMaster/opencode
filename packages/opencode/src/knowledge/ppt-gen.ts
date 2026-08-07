@@ -64,7 +64,7 @@ function assertValidTaskId(taskId: string): void {
 }
 
 /** PPT 任务工作区根目录（服务端路径），可用环境变量覆盖 */
-function pptRoot(): string {
+export function pptRoot(): string {
   return process.env.PPT_GEN_ROOT ?? join(process.env.XDG_DATA_HOME ?? join(process.cwd(), ".opencode"), "ppt-gen")
 }
 

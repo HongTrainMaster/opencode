@@ -24,6 +24,7 @@ import { WikiSessionService } from "@/knowledge/wiki-session"
 import { SummaryWriter } from "@/knowledge/summary-writer"
 import { PptJobService } from "@/knowledge/ppt-job"
 import { PptGenService } from "@/knowledge/ppt-gen"
+import { PptCoverService } from "@/knowledge/ppt-cover"
 import { mkdtempSync, readFileSync, existsSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -89,6 +90,9 @@ const summaryWriterLayer = SummaryWriter.test(llmPath)
 const pptGenLayer = PptGenService.test(() =>
   Effect.succeed({ status: "SUCCESS" as const, outputPath: "/tmp/o.pptx" }),
 )
+const pptCoverLayer = PptCoverService.test(() =>
+  Effect.succeed({ status: "SUCCESS" as const, outputPath: "/tmp/o.pptx" }),
+)
 
 const graphStoreLayer = KnowledgeGraphStore.test(":memory:")
 const extractorLayer = EntityExtractor.test(({ title }) =>
@@ -105,6 +109,7 @@ const apiLayer = HttpRouter.serve(
     Layer.provide(KnowledgeSummaryHandler),
     Layer.provide(PptGenHandler),
     Layer.provide(pptGenLayer),
+    Layer.provide(pptCoverLayer),
     Layer.provide(
       IngestService.layer.pipe(
         Layer.provide(graphStoreLayer),

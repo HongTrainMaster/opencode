@@ -42,6 +42,28 @@ SKILL_DIR = os.path.dirname(os.path.abspath(__file__))
 IMAGE_GEN_SCRIPT = os.path.join(SKILL_DIR, "generate_image.py")
 WORK_DIR = os.environ.get("PPT_WORK_DIR", os.getcwd())
 
+# --- 进度上报（写 workdir/output/progress.json，供轮询读取）---
+_progress = {"pagesDone": 0, "imagesDone": 0, "currentImage": ""}
+
+
+def write_progress(payload: dict) -> None:
+    """把进度 JSON 写入 workdir 下 output/progress.json（尽力而为）。"""
+    try:
+        out_dir = os.path.join(WORK_DIR, "output")
+        os.makedirs(out_dir, exist_ok=True)
+        with open(os.path.join(out_dir, "progress.json"), "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False)
+    except Exception:
+        pass
+
+
+def emit_progress(stage: str = "BUILDING", **extra) -> None:
+    """合并当前计数 + 额外字段后写盘。"""
+    data = {"stage": stage}
+    data.update(_progress)
+    data.update(extra)
+    write_progress(data)
+
 
 def _set_shape_text(shape, text: str) -> bool:
     """尽力设置形状文本；占位符/文本框/自选图形均可。"""
@@ -93,6 +115,43 @@ def _replace_slide_texts(slide, texts: dict, placeholders: list) -> int:
     return filled
 
 
+def _fit_image_to_box(src_png: str, width_emu: int, height_emu: int) -> str:
+    """按目标 box 宽高比 cover 裁剪生成图，输出适配后的 PNG（不变形、精确填充）。
+
+    python-pptx add_picture 保持图片原始比例，512x512 方形图放进宽幅/窄幅 box 会溢出或留白。
+    这里用 PIL 中心裁剪到目标比例后保存，保证 add_picture(指定 w/h) 精确填满。
+    """
+    try:
+        from PIL import Image
+        from pptx.util import Emu
+
+        target_w = Emu(width_emu).inches
+        target_h = Emu(height_emu).inches
+        if target_w <= 0 or target_h <= 0:
+            return src_png
+        ratio = target_w / target_h  # 目标宽高比
+
+        img = Image.open(src_png)
+        iw, ih = img.size
+        i_ratio = iw / ih
+        # cover 裁剪：缩放后中心裁到目标比例
+        if i_ratio > ratio:
+            # 图更宽 → 裁左右
+            new_w = int(ih * ratio)
+            left = (iw - new_w) // 2
+            img = img.crop((left, 0, left + new_w, ih))
+        else:
+            # 图更高 → 裁上下
+            new_h = int(iw / ratio)
+            top = (ih - new_h) // 2
+            img = img.crop((0, top, iw, top + new_h))
+        fit_path = src_png.replace(".png", "-fit.png")
+        img.save(fit_path)
+        return fit_path
+    except Exception:
+        return src_png  # 无 PIL 或失败则用原图（add_picture 兜底）
+
+
 def _is_picture_shape(shape) -> bool:
     """判断形状是否为图片：优先按 python-pptx 枚举值 13(PICTURE)，兜底检查 XML 是否含 a:blip。"""
     try:
@@ -119,6 +178,9 @@ def _replace_slide_images(slide, images: dict, page_index: int) -> int:
             print(f"[img] 跳过非图片形状 '{name}' (type={shape.shape_type})", flush=True)
             continue
         out_png = os.path.join(WORK_DIR, f".ppt-images/page{page_index}-{name}.png")
+        # 生成图片前：记录当前图片提示词（图片 40-60s，让前端看到"正在生成哪张图"）
+        _progress["currentImage"] = prompt
+        emit_progress()
         # 调用同目录 generate_image.py 生成
         r = subprocess.run(
             [sys.executable, IMAGE_GEN_SCRIPT, prompt, out_png],
@@ -127,15 +189,25 @@ def _replace_slide_images(slide, images: dict, page_index: int) -> int:
         )
         if r.returncode != 0 or not os.path.exists(out_png):
             print(f"[img] 生成失败 '{name}': {r.stderr[-300:] if r.stderr else 'no stderr'}", flush=True)
+            _progress["currentImage"] = ""
+            emit_progress()
             continue
         # 替换：记录原位置/尺寸，删除原图，插入新图
         try:
             left, top = shape.left, shape.top
             width, height = shape.width, shape.height
             shape._element.getparent().remove(shape._element)
-            slide.shapes.add_picture(out_png, left, top, width, height)
+            # 生成图是 512x512 方形，目标区域可能是宽幅/窄幅。
+            # 用 PIL 按目标宽高比 cover 裁剪，保证精确填满且不变形。
+            final_png = out_png
+            if os.path.exists(out_png):
+                final_png = _fit_image_to_box(out_png, width, height)
+            slide.shapes.add_picture(final_png, left, top, width, height)
             replaced += 1
-            print(f"[img] 替换完成 '{name}' -> {out_png}", flush=True)
+            _progress["imagesDone"] += 1
+            _progress["currentImage"] = ""
+            emit_progress()
+            print(f"[img] 替换完成 '{name}' -> {final_png}", flush=True)
         except Exception as e:
             print(f"[img] 替换失败 '{name}': {e}", flush=True)
     return replaced
@@ -200,6 +272,14 @@ def main() -> None:
     image_total = 0
 
     pages = deck.get("slides", deck.get("layouts", []))
+    total_pages = len(pages)
+    images_total = sum(len((p.get("images", {}) or {})) for p in pages)
+    # 阶段 B：构建启动（总页数 = deck slides 数，插图总数 = 所有页 images 数）
+    write_progress({
+        "stage": "BUILDING", "totalPages": total_pages, "pagesDone": 0,
+        "imagesTotal": images_total, "imagesDone": 0, "currentImage": "",
+    })
+
     for page_index, page in enumerate(pages):
         slide_index = page.get("slideIndex")
         texts = page.get("texts", {}) or {}
@@ -218,6 +298,9 @@ def main() -> None:
         filled_total += _replace_slide_texts(new_slide, texts, placeholders)
         image_total += _replace_slide_images(new_slide, images, page_index)
         slides_count += 1
+        # 阶段 C：每构建完一页更新页数进度
+        _progress["pagesDone"] = slides_count
+        emit_progress(totalPages=total_pages, imagesTotal=images_total)
 
     # 关键：模板原始页仅作设计来源，生成完成后删除，产物只保留新生成的页
     if deck.get("discardTemplateSlides", True):
@@ -225,6 +308,11 @@ def main() -> None:
 
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
     prs.save(out_path)
+    # 阶段 D：全部完成
+    write_progress({
+        "stage": "DONE", "totalPages": total_pages, "pagesDone": slides_count,
+        "imagesTotal": images_total, "imagesDone": _progress["imagesDone"], "currentImage": "",
+    })
     print(json.dumps({"ok": True, "slides": slides_count, "filled": filled_total, "images": image_total}, ensure_ascii=False))
 
 

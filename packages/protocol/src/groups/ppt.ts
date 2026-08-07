@@ -52,6 +52,17 @@ export const PptJobStatus = Schema.Union([
   Schema.Literal("INTERRUPTED"),
 ])
 
+/** PPT 生成进度（由技能脚本写 output/progress.json，轮询时读文件附上） */
+export const PptJobProgress = Schema.Struct({
+  stage: Schema.optional(Schema.String),
+  totalSlides: Schema.optional(Schema.Number),
+  totalPages: Schema.optional(Schema.Number),
+  pagesDone: Schema.optional(Schema.Number),
+  imagesTotal: Schema.optional(Schema.Number),
+  imagesDone: Schema.optional(Schema.Number),
+  currentImage: Schema.optional(Schema.String),
+})
+
 export const PptJobResult = Schema.Struct({
   jobId: Schema.String,
   taskId: Schema.String,
@@ -59,6 +70,8 @@ export const PptJobResult = Schema.Struct({
   /** SUCCESS 时产物 .pptx 的绝对路径 */
   outputPath: Schema.optional(Schema.String),
   error: Schema.optional(Schema.String),
+  /** 生成进度（尽力而为，文件缺失/损坏时为 undefined） */
+  progress: Schema.optional(PptJobProgress),
   createdAt: Schema.String,
   updatedAt: Schema.String,
 })
