@@ -4,6 +4,7 @@ import { HttpApiBuilder } from "effect/unstable/httpapi"
 import { ExternalIdentity } from "@opencode-ai/server/auth/external-identity"
 import { readFileSync } from "node:fs"
 import { PptGenService } from "@/knowledge/ppt-gen"
+import { PptCoverService } from "@/knowledge/ppt-cover"
 import { PptJobService } from "@/knowledge/ppt-job"
 import type { PptJobRow } from "@/knowledge/store"
 import { KnowledgeApi } from "../groups/knowledge"
@@ -25,6 +26,7 @@ export const PptGenHandler = HttpApiBuilder.group(
   (handlers) =>
     Effect.gen(function* () {
       const pptGen = yield* PptGenService
+      const coverService = yield* PptCoverService
       const jobService = yield* PptJobService
       return handlers
         .handle(
@@ -62,6 +64,42 @@ export const PptGenHandler = HttpApiBuilder.group(
               ),
             })
             yield* Effect.logInfo("ppt gen submitted", { taskId, jobId })
+            return { code: 200, data: [{ taskId, jobId, status: "RUNNING" }] }
+          }),
+        )
+        .handle(
+          "renderCover",
+          Effect.fn(function* (ctx: any) {
+            const identity = yield* ExternalIdentity
+            const taskId: string = ctx.payload?.taskId ?? ""
+            const style = ctx.payload?.style ?? {}
+
+            if (!identity.userId) {
+              yield* Effect.logWarning("ppt cover rejected 401", { taskId, reason: "no userId" })
+              return HttpServerResponse.empty({ status: 401 })
+            }
+            if (!taskId || !style.fileName || !style.fileContent) {
+              yield* Effect.logWarning("ppt cover rejected 400", { taskId })
+              return HttpServerResponse.empty({ status: 400 })
+            }
+
+            const jobId = yield* jobService.start({
+              taskId,
+              prompt: "ppt cover render",
+              run: coverService.render({
+                taskId,
+                styleFileName: style.fileName,
+                styleContentBase64: style.fileContent,
+              }).pipe(
+                Effect.map((r) => {
+                  if (r.status !== "SUCCESS" || !r.outputPath) {
+                    throw new Error(r.error ?? "ppt cover failed without error")
+                  }
+                  return { outputPath: r.outputPath }
+                }),
+              ),
+            })
+            yield* Effect.logInfo("ppt cover submitted", { taskId, jobId })
             return { code: 200, data: [{ taskId, jobId, status: "RUNNING" }] }
           }),
         )

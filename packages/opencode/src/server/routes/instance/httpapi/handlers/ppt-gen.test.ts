@@ -24,6 +24,7 @@ import { IngestService } from "@/knowledge/ingest"
 import { IngestJobService } from "@/knowledge/ingest-job"
 import { PptJobService } from "@/knowledge/ppt-job"
 import { PptGenService } from "@/knowledge/ppt-gen"
+import { PptCoverService } from "@/knowledge/ppt-cover"
 import { testEffect } from "@test/lib/effect"
 import { writeFileSync, mkdirSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -96,6 +97,9 @@ const pptGenLayer = PptGenService.test(() =>
     return { status: "SUCCESS" as const, outputPath: tmpOut }
   }),
 )
+const pptCoverLayer = PptCoverService.test(() =>
+  Effect.succeed({ status: "SUCCESS" as const, outputPath: tmpOut }),
+)
 
 const apiLayer = HttpRouter.serve(
   HttpApiBuilder.layer(KnowledgeApi).pipe(
@@ -105,6 +109,7 @@ const apiLayer = HttpRouter.serve(
     Layer.provide(KnowledgeSummaryHandler),
     Layer.provide(PptGenHandler),
     Layer.provide(pptGenLayer),
+    Layer.provide(pptCoverLayer),
     Layer.provide(
       IngestService.layer.pipe(
         Layer.provide(graphStoreLayer),
@@ -211,6 +216,34 @@ describe("Knowledge Ppt HttpApi", () => {
     Effect.gen(function* () {
       const response = yield* HttpClientRequest.get("/serve/api/ppt/file/job_unknown").pipe(HttpClient.execute)
       expect(response.status).toBe(404)
+    }),
+  )
+
+  it.live("POST /serve/api/ppt/render-cover 提交并轮询到 SUCCESS", () =>
+    Effect.gen(function* () {
+      const jobService = yield* PptJobService
+      const response = yield* HttpClientRequest.post("/serve/api/ppt/render-cover").pipe(
+        HttpClientRequest.setBody(
+          HttpBody.jsonUnsafe({
+            taskId: "cover_10001",
+            style: { fileName: "template.pptx", fileContent: Buffer.from("stub").toString("base64") },
+          }),
+        ),
+        HttpClient.execute,
+      )
+      expect(response.status).toBe(200)
+      const body = (yield* response.json) as any
+      expect(body.code).toBe(200)
+      expect(body.data[0].taskId).toBe("cover_10001")
+      expect(body.data[0].status).toBe("RUNNING")
+      const jobId = body.data[0].jobId
+      let job: any
+      for (let i = 0; i < 100; i++) {
+        job = yield* jobService.get(jobId)
+        if (job && job.status !== "RUNNING") break
+        yield* Effect.sleep("10 millis")
+      }
+      expect(job?.status).toBe("SUCCESS")
     }),
   )
 })
