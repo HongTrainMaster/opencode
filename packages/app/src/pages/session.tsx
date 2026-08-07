@@ -40,6 +40,7 @@ import { showToast } from "@/utils/toast"
 import { base64Encode, checksum } from "@opencode-ai/core/util/encode"
 import { useLocation, useNavigate, useParams, useSearchParams } from "@solidjs/router"
 import { NewSessionView, SessionHeader } from "@/components/session"
+import { HistorySessionSidebar } from "@/components/session/history-session-sidebar"
 import { ErrorPage } from "@/pages/error"
 import { CommentsProvider, useComments } from "@/context/comments"
 import { useCommand } from "@/context/command"
@@ -375,6 +376,11 @@ export default function Page() {
   const reviewFile = () => view().review.file()
   const sessionOwnership = createSessionOwnership(sessionKey)
   const newSessionDesign = createMemo(() => settings.general.newLayoutDesigns())
+
+  const [historyOpen, setHistoryOpen] = persisted(
+    Persist.window("session.history.sidebar.open"),
+    createStore({ open: true }),
+  )
 
   createEffect(() => {
     if (!prompt.ready()) return
@@ -2245,6 +2251,10 @@ export default function Page() {
   return (
     <SessionRouteFrame>
       <SessionHeader />
+      <div class="flex flex-1 min-h-0">
+        <Show when={historyOpen.open}>
+          <HistorySessionSidebar onClose={() => setHistoryOpen("open", false)} />
+        </Show>
       <div
         ref={panelRow}
         class="flex-1 min-h-0 flex flex-col md:flex-row"
@@ -2252,6 +2262,17 @@ export default function Page() {
           "gap-2 p-2": settings.general.newLayoutDesigns(),
         }}
       >
+        <Show when={!historyOpen.open}>
+          <div class="shrink-0 flex flex-col items-center pt-2 pr-1">
+            <ButtonV2
+              variant="ghost"
+              size="small"
+              icon="archive"
+              onClick={() => setHistoryOpen("open", true)}
+              aria-label={language.t("session.history.title")}
+            />
+          </div>
+        </Show>
         <Show when={!isDesktop() && !!params.id && !settings.general.newLayoutDesigns()}>{mobileTabs()}</Show>
 
         <div
@@ -2377,6 +2398,7 @@ export default function Page() {
             </div>
           </Show>
         </Show>
+      </div>
       </div>
 
       <Show when={!newSessionDesign()}>

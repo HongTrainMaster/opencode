@@ -1087,6 +1087,9 @@ export const dict = {
   "session.delete.title": "删除会话",
   "session.delete.confirm": '删除会话 "{{name}}"？',
   "session.delete.button": "删除会话",
+  "session.history.title": "历史会话",
+  "session.history.empty": "暂无历史会话",
+  "session.history.untitled": "未命名会话",
 
   "workspace.new": "新建工作区",
   "workspace.type.local": "本地",
