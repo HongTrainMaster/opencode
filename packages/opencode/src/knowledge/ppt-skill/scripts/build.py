@@ -165,6 +165,39 @@ def _is_picture_shape(shape) -> bool:
         return False
 
 
+def _shape_size_inches(shape) -> str:
+    """返回形状尺寸描述（英寸），异常返回 '?'。"""
+    try:
+        from pptx.util import Emu
+        w = Emu(shape.width).inches
+        h = Emu(shape.height).inches
+        return f"{w:.1f}x{h:.1f}"
+    except Exception:
+        return "?"
+
+
+def _is_fullpage_image(shape) -> bool:
+    """判断图片是否全页背景（面积占比过高）：宽或高接近页面尺寸视为背景大图。
+
+    页面约 10x5.6 in（slide size），全页图通常 10x5.6 / 12.8x7.2 整幅铺满。
+    以"宽 >= 页面宽 80% 且 高 >= 页面高 70%"或"面积占比 > 55%"判定。
+    """
+    try:
+        from pptx.util import Emu
+        slide_w = Emu(shape._part.slide_width).inches if hasattr(shape._part, "slide_width") else 10.0
+        slide_h = Emu(shape._part.slide_height).inches if hasattr(shape._part, "slide_height") else 5.6
+    except Exception:
+        slide_w, slide_h = 10.0, 5.6
+    try:
+        w = Emu(shape.width).inches
+        h = Emu(shape.height).inches
+        area_ratio = (w * h) / (slide_w * slide_h)
+        # 覆盖页面大部分区域（面积 > 55%，或宽高都接近页面）
+        return area_ratio > 0.55 or (w >= slide_w * 0.8 and h >= slide_h * 0.7)
+    except Exception:
+        return False
+
+
 def _replace_slide_images(slide, images: dict, page_index: int) -> int:
     """按名称生成图片并替换 slide 中的 PICTURE 形状（保留位置/尺寸）。返回替换成功数。"""
     replaced = 0
@@ -176,6 +209,11 @@ def _replace_slide_images(slide, images: dict, page_index: int) -> int:
         # 仅处理图片类形状（枚举 13 或 XML 含 blip）
         if not _is_picture_shape(shape):
             print(f"[img] 跳过非图片形状 '{name}' (type={shape.shape_type})", flush=True)
+            continue
+        # 跳过全页背景图：面积超过页面 55% 的图视为设计背景/过渡页大图，
+        # 生成图替换会破坏模板设计或盖满整页。仅替换中小尺寸的插图位。
+        if _is_fullpage_image(shape):
+            print(f"[img] 跳过全页背景图 '{name}' (size={_shape_size_inches(shape)})", flush=True)
             continue
         out_png = os.path.join(WORK_DIR, f".ppt-images/page{page_index}-{name}.png")
         # 生成图片前：记录当前图片提示词（图片 40-60s，让前端看到"正在生成哪张图"）
