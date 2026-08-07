@@ -1,5 +1,5 @@
 import { Context, Effect, Layer } from "effect"
-import { mkdirSync, readdirSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { InstanceStore } from "@/project/instance-store"
 import { PermissionV1 } from "@opencode-ai/core/v1/permission"
@@ -68,9 +68,27 @@ function pptRoot(): string {
   return process.env.PPT_GEN_ROOT ?? join(process.env.XDG_DATA_HOME ?? join(process.cwd(), ".opencode"), "ppt-gen")
 }
 
-/** 技能目录：优先环境变量，默认指向 fork 内置的 ppt-skill */
+/** 技能目录：优先环境变量 PPT_SKILL_DIR（生产 systemd 配置指向真实部署路径）。
+ * 编译产物中 import.meta.dir 是 bunfs 虚拟路径（/$bunfs/root/），不能定位外部脚本，
+ * 故当 PPT_SKILL_DIR 未设置且 import.meta.dir 落在虚拟文件系统时，回退到工作目录下探测
+ * 常见源码位置（./opencode-new/packages/opencode/src/knowledge/ppt-skill）。
+ */
 function skillDir(): string {
-  return process.env.PPT_SKILL_DIR ?? join(import.meta.dir, "ppt-skill")
+  const env = process.env.PPT_SKILL_DIR
+  if (env) return env
+  const meta = import.meta.dir
+  if (meta && !meta.startsWith("/$bunfs")) return join(meta, "ppt-skill")
+  // 编译产物回退：探测已知源码部署路径
+  const cwd = process.cwd()
+  const candidates = [
+    join(cwd, "opencode-new", "packages", "opencode", "src", "knowledge", "ppt-skill"),
+    join(cwd, "packages", "opencode", "src", "knowledge", "ppt-skill"),
+    join(cwd, "src", "knowledge", "ppt-skill"),
+  ]
+  for (const c of candidates) {
+    if (existsSync(c)) return c
+  }
+  return join(cwd, "ppt-skill")
 }
 
 function buildPptPrompt(args: {
