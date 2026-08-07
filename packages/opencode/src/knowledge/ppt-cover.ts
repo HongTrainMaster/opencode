@@ -73,7 +73,7 @@ function runPptCover(args: {
       spawnSync("python3", [script, stylePath, coverPath], { encoding: "utf-8", timeout: 240_000 }),
     )
     if (r.status !== 0 || !existsSync(coverPath)) {
-      const msg = `render_cover failed: ${(r.stderr ?? r.stdout ?? "").trim() || "no cover.png written"}`
+      const msg = `render_cover failed: ${(r.error?.message ?? r.stderr ?? r.stdout ?? "").trim() || "no cover.png written"}`
       yield* Effect.logWarning("ppt cover failed", { taskId: args.taskId, error: msg })
       return { status: "FAILED" as const, error: msg }
     }
