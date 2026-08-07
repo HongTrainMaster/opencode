@@ -6,7 +6,7 @@ description: 上传 PPT 风格参考生成新 PPT。分析模板原始页设计�
 # PPT 生成（模板页设计复用 + AI 插图）
 
 ## 目标
-用户上传一份 .pptx 作为**风格参考模板**（复用其原始页面的设计：图片/形状/背景/母版配色），结合提示词生成一份新的 .pptx。模板中的图片位置可**按页面内容生成 AI 插图**替换。
+用户上传一份 .pptx 作为**风格参考模板**（复用其原始页面的设计：图片/形状/背景/母版配色），结合提示词生成一份结构完整、设计统一的新 .pptx。模板中的图片位置可**按页面内容生成 AI 插图**替换。
 
 ## 输入
 - `style.pptx`：工作目录内用户上传的风格参考 PPT。
@@ -20,57 +20,59 @@ description: 上传 PPT 风格参考生成新 PPT。分析模板原始页设计�
   - `name`：形状名称（替换文本/图片时用此名称定位）。
   - `type`：形状类型（AUTO_SHAPE/TEXT_BOX/PLACEHOLDER/**PICTURE**/TABLE...）。
   - `widthIn`/`heightIn`：PICTURE 形状的尺寸（英寸）。
-  - `isPlaceholder` + `placeholderIdx`、`text`：文本信息。
+  - `isPlaceholder` + `placeholderIdx`、`text`：文本信息（模板示例文字，用于判断页面用途）。
 
-先浏览 `slides` 目录，识别模板中适合各类用途的页（封面、目录、过渡、内容、结尾），**记录每页的 slideIndex、要替换文本的 shape 名称、以及 PICTURE 图片形状的名称**。
+**关键**：先浏览 `slides` 目录，按文本内容把模板页分类：
+- **封面页**：有标题 + 副标题/单位/日期（如 "模板封面标题"、"广东省北江流域管理局"）。
+- **目录页**：有 "目录" 标题 + 多个目录项文本框（"目录项一/二/三..."，**每个目录项是独立 shape**）。
+- **过渡页**：有 "小节标题" 字样（"模板小节过渡标题"）。
+- **内容页**：有 "内容页标题" + 正文项（"内容项标题"、"内容项正文"）。
+- **结束页**：有 "谢谢聆听" / "感谢聆听" 字样。
 
-### 2. 编写 deck.json
+**记录每页的 slideIndex、要替换文本的 shape 名称、PICTURE 图片形状名称**。模板页通常有多个同类页（多个封面、多个内容页），选择适合当前内容的那个。
+
+### 2. 确定 PPT 结构（重要：按标准顺序组织）
+按以下**标准 PPT 结构**组织 deck.json（除非用户提示词明确要求其他结构）：
+```
+1. 封面页（1 页）
+2. 目录页（1 页）
+3. 过渡页 → 内容页 × N → 过渡页 → 内容页 × N → …（按内容分章节）
+4. 结束页（1 页：谢谢聆听）
+```
+- 内容按逻辑分 3-6 个章节，每章节 = 1 过渡页 + 2-4 内容页。
+- 页数：用户未指定时，10-16 页为宜（封面 1 + 目录 1 + 各章节 + 结束 1）。
+- **每页用 `slideIndex` 引用模板原始页**（值是 analyze.py 输出的真实 slideIndex）。
+
+### 3. 编写 deck.json
 ```json
 {
   "slides": [
-    {
-      "slideIndex": 0,
-      "texts": {
-        "Text 0": "无人机技术培训",
-        "Text 6": "广东省北江流域管理局",
-        "Text 5": "2026年8月"
-      },
-      "images": {
-        "Image 0": "A professional drone hovering above a training field, cinematic lighting, detailed"
-      }
-    },
-    {
-      "slideIndex": 5,
-      "texts": {
-        "Text 3": "目录",
-        "Text 6": "一、无人机基础概述",
-        "Text 9": "二、无人机系统组成"
-      },
-      "images": {
-        "图片 93195": "Futuristic drone technology concept, blue tones, high detail"
-      }
-    }
+    { "slideIndex": 0, "texts": { "Text 0": "无人机技术培训", "Text 6": "广东省北江流域管理局", "Text 5": "2026年8月" }, "images": { "Image 0": "A professional drone hovering above a training field, cinematic lighting" } },
+    { "slideIndex": 5, "texts": { "Text 3": "目录", "Text 6": "一、无人机基础概述", "Text 9": "二、无人机系统组成", "Text 12": "三、空气动力学", "Text 15": "四、导航定位", "Text 18": "五、传感器技术", "Text 21": "六、通信链路" } },
+    { "slideIndex": 10, "texts": { "Text 5": "第一章 无人机基础概述" } },
+    { "slideIndex": 16, "texts": { "Text 0": "一、无人机基础概述", "Text 6": "定义与发展", "Text 7": "无人机是不载人航空器…" } }
   ]
 }
 ```
-规则：
-- **每页用 `slideIndex` 引用模板原始页**（值是 analyze.py 输出的真实 slideIndex），`texts` 键为**该页存在的 shape 名称**，值为新文本。
-- **`images` 可选**：键为**该页 PICTURE 形状的名称**（analyze.py 输出 type=PICTURE 的 shape），值为**该页主题的英文插图提示词**。build.py 会用本地 SSD-1B 生成图片替换该位置（保留原尺寸）。
-  - 插图提示词建议：描述主体 + 场景 + 风格（如 "professional photography"、"futuristic"、"cinematic lighting"、"blue tones"），英文效果更好。
-  - 只对**内容相关的 PICTURE** 生成插图；装饰性小图标/logo 可保留原图（不写进 images）。
-- 一页内容对应一个 slide 项：封面页、目录页、过渡页、内容页、结尾页尽量齐全；页数按提示词需要。
-- 若某页实在无法用 slideIndex 表达（模板无合适页），可用 `{"layoutIndex": i, "placeholders": [...]}` 兜底（不保留设计，尽量不用）。
+规则（**严格遵守**）：
+- **`texts` 的键必须精确等于 analyze.py 输出的该页真实 shape `name`**，逐个填入对应 shape。
+- **目录页**：把目录项**逐个填入模板的目录项 shape**（如 "Text 6"、"Text 9"、"Text 12"... 各一项），**不要把所有目录项塞进同一个 shape**。模板有多少个目录项 shape 就用多少个，超出的章节可合并或只列主要章节。
+- **内容页**：标题填入标题 shape，正文填入正文 shape；不要自创不在模板中的 shape 名。
+- **过渡页**：只填标题 shape（如 "Text 5"），保留模板的装饰。
+- **`images` 可选**：键为该页 **PICTURE 形状名称**，值为该页主题的英文插图提示词。只对**内容相关的 PICTURE**（大图）生成插图；装饰性小图标/logo 不写进 images。
+  - 插图提示词：主体 + 场景 + 风格（如 "professional photography"、"futuristic"、"cinematic lighting"），英文效果更好。
+- **结束页**：填 "谢谢聆听"、"感谢聆听" 等（模板已有则保留或替换为提示词要求的致谢）。
 
-### 3. 构建
+### 4. 构建
 运行 `python {SKILL_DIR}/scripts/build.py style.pptx deck.json output/result.pptx` 构建。
-- build.py 会**复制模板原始页的设计**（图片/形状/背景），替换 `texts` 指定的文本，对 `images` 指定的 PICTURE 形状调用本地文生图生成新图替换，然后**删除模板所有原始页**，产物只保留新生成的页。
-- 每张插图生成约 40-60 秒；多页插图会串行生成，耐心等待。图片生成失败不阻断（保留模板原图）。
+- build.py 会**复制模板原始页的设计**（图片/形状/背景），替换 `texts` 指定的文本，对 `images` 指定的 PICTURE 形状调用本地文生图生成新图替换（**按目标区域比例裁剪适配**），然后**删除模板所有原始页**，产物只保留新生成的页。
+- 每张插图生成约 40-60 秒；多页插图串行生成，耐心等待。图片生成失败不阻断（保留模板原图）。
 
-### 4. 校验
-确认 `output/result.pptx` 存在且非空，页数与 deck.json 的 slides 数一致（构建失败需修正 deck.json 重试）。
+### 5. 校验
+确认 `output/result.pptx` 存在且非空，页数与 deck.json 的 slides 数一致（构建失败需修正 deck.json 重试）。检查：封面/目录/过渡/内容/结束页顺序正确，模板示例文字（"目录项一"等）已全部替换。
 
 ## 规则
 - 不要修改 `style.pptx` 本身；只在构建时复制其页设计。
-- 文本内容按提示词重新生成；不要保留模板示例文字。
+- 文本内容按提示词重新生成；**不要保留模板示例文字**（"模板封面标题"、"目录项一"、"内容项标题"等必须替换）。
 - 输出必须是 `output/result.pptx` 这个固定路径。
 - 插图用本地模型生成，不依赖外网；提示词用英文以获得更稳定效果。
