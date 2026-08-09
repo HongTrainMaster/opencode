@@ -5,7 +5,7 @@ import { Session } from "@/session/session"
 import { SessionPrompt } from "@/session/prompt"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
-import { existsSync, mkdirSync, readdirSync } from "node:fs"
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 
 export interface WikiSessionBuildResult {
@@ -93,7 +93,7 @@ function runWikiSession(
     }
     const beforeSources = new Set(readSources())
 
-    const prompt = buildWikiPrompt(args.title, args.text, initialized)
+    const prompt = buildWikiPrompt(args.title, args.text, args.documentId, initialized)
 
     const result = yield* store.provide(
       { directory: args.workspaceLlmPath },
@@ -136,6 +136,9 @@ function runWikiSession(
       }
     }
     const sourcePath = join(sourcesDir, newPages[0]!)
+    // 方案 B：把 documentId 写入 source 页 frontmatter（若无该字段则注入），
+    // 供 llm-wiki 的 resolve-source-id.sh 直接读取，避免标题匹配的脆弱性。
+    yield* Effect.sync(() => injectDocumentId(sourcePath, args.documentId))
     yield* Effect.logInfo("wiki session wrote source page", {
       documentId: args.documentId,
       workspaceLlmPath: args.workspaceLlmPath,
@@ -159,7 +162,31 @@ export function findNewSourcePages(before: Set<string>, after: string[]): string
   return after.filter((f) => f.endsWith(".md") && !before.has(f))
 }
 
-export function buildWikiPrompt(title: string, text: string, initialized: boolean): string {
+/**
+ * 方案 B：把 documentId 写入 source 页的 YAML frontmatter。
+ * - 已存在 frontmatter → 在 frontmatter 内补充 documentId 字段
+ * - 无 frontmatter → 在文件头部注入一个最小 frontmatter
+ * 幂等：若已有同名 documentId 字段则跳过。
+ */
+export function injectDocumentId(sourcePath: string, documentId: string): void {
+  const raw = readFileSync(sourcePath, "utf8")
+  const documentIdLine = `documentId: ${documentId}`
+
+  if (raw.startsWith("---\n")) {
+    const end = raw.indexOf("\n---", 4)
+    if (end === -1) return // frontmatter 未闭合，不冒险改写
+    const fm = raw.slice(4, end)
+    if (fm.includes("documentId:")) return // 已存在，幂等跳过
+    const rest = raw.slice(end)
+    writeFileSync(sourcePath, `---\n${fm.trimEnd()}\n${documentIdLine}\n${rest}`, "utf8")
+    return
+  }
+
+  // 无 frontmatter：注入最小 frontmatter
+  writeFileSync(sourcePath, `---\n${documentIdLine}\n---\n\n${raw}`, "utf8")
+}
+
+export function buildWikiPrompt(title: string, text: string, documentId: string, initialized: boolean): string {
   const steps: string[] = []
   if (!initialized) {
     steps.push(
@@ -174,6 +201,7 @@ export function buildWikiPrompt(title: string, text: string, initialized: boolea
     `${steps.length + 2}. 这是无头自动化入库，跳过隐私自检，不要向用户提问。`,
     `${steps.length + 3}. 将文档正文作为素材，先写入 raw 目录，再生成 source 页（wiki/sources/）和 entity 页（wiki/entities/），并更新 index.md、log.md。`,
     `${steps.length + 4}. 实体页用中文命名，符合知识库 schema。`,
+    `${steps.length + 5}. 生成的 source 页（wiki/sources/ 下的新 .md 文件）必须在文件开头的 YAML frontmatter 中包含字段：documentId: ${documentId}。即使你无法验证该值，也必须原样写入。`,
   )
   return [
     `请对以下文档执行 llm-wiki 的 ingest 工作流，将其加入当前知识库。`,
@@ -183,8 +211,11 @@ export function buildWikiPrompt(title: string, text: string, initialized: boolea
     ``,
     `文档标题：${title}`,
     ``,
+    `documentId：${documentId}`,
+    ``,
     `文档正文：`,
     ``,
     text,
   ].join("\n")
 }
+
