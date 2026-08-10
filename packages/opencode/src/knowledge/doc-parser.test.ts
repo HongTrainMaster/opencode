@@ -95,4 +95,30 @@ describe("doc-parser", () => {
     )
     expect(doc.text).toBe("")
   })
+
+  it("falls back to empty text when tesseract is unavailable (OCR 容错)", async () => {
+    // 用不存在的 tesseract 路径验证：外部命令缺失时静默返回空，不抛错打断入库
+    const oldCmd = process.env.TESSERACT_CMD
+    process.env.TESSERACT_CMD = "tesseract-definitely-not-installed"
+    try {
+      const doc = await run(
+        parseDocument({ format: "xlsx", fileContent: Buffer.from("garbage").toString("base64") }),
+      )
+      expect(doc.text).toBe("")
+    } finally {
+      if (oldCmd === undefined) delete process.env.TESSERACT_CMD
+      else process.env.TESSERACT_CMD = oldCmd
+    }
+  })
+
+  it("keeps txt parsing working without OCR", async () => {
+    // txt 有文本时不应触发 OCR（若误触发会因 tesseract 不存在而失败，验证 text 仍完整）
+    const doc = await run(
+      parseDocument({
+        format: "txt",
+        fileContent: Buffer.from("广东省水利厅政务服务工作月报（2026年4月）").toString("base64"),
+      }),
+    )
+    expect(doc.text).toBe("广东省水利厅政务服务工作月报（2026年4月）")
+  })
 })
