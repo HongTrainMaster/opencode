@@ -308,6 +308,7 @@ export type ListInput = {
   start?: number
   search?: string
   limit?: number
+  archived?: boolean
   /**
    * 知识库按用户隔离：只返回该外部用户创建的会话，加上无外部元数据的旧会话。
    * 过滤在 SQL 层完成，在 LIMIT 之前生效，避免其他用户会话挤掉当前用户历史。
@@ -323,6 +324,11 @@ export type GlobalListInput = {
   search?: string
   limit?: number
   archived?: boolean
+  /**
+   * 知识库按用户隔离：只返回该外部用户创建的会话（metadata.externalUserId/
+   * externalTenantId 精确匹配），SQL 层过滤（LIMIT 之前）。
+   */
+  externalUser?: { userId: string; tenantId: string }
 }
 
 export const Event = {
@@ -567,6 +573,16 @@ const layer: Layer.Layer<
       if (input?.cursor) conditions.push(lt(SessionTable.time_updated, input.cursor))
       if (input?.search) conditions.push(like(SessionTable.title, `%${input.search}%`))
       if (!input?.archived) conditions.push(isNull(SessionTable.time_archived))
+      if (input?.externalUser) {
+        // 知识库按用户隔离：SQL 层严格过滤（LIMIT 之前），只保留当前用户创建
+        // 且 externalUserId/externalTenantId 精确匹配的会话。
+        conditions.push(
+          and(
+            eq(sql`json_extract(${SessionTable.metadata}, '$.externalUserId')`, input.externalUser.userId),
+            eq(sql`json_extract(${SessionTable.metadata}, '$.externalTenantId')`, input.externalUser.tenantId),
+          )!,
+        )
+      }
 
       const query =
         conditions.length > 0
@@ -992,6 +1008,10 @@ function listByProject(
   if (input.roots) {
     conditions.push(isNull(SessionTable.parent_id))
   }
+  // 归档会话默认隐藏（与 listGlobal 一致），否则删除/归档后仍出现在历史列表。
+  if (input.archived === undefined || !input.archived) {
+    conditions.push(isNull(SessionTable.time_archived))
+  }
   if (input.start) {
     conditions.push(gte(SessionTable.time_updated, input.start))
   }
@@ -999,18 +1019,13 @@ function listByProject(
     conditions.push(like(SessionTable.title, `%${input.search}%`))
   }
   if (input.externalUser) {
-    // 知识库按用户隔离：SQL 层过滤（LIMIT 之前），只保留当前用户创建
-    // 的会话 + 无外部元数据的旧会话。
+    // 知识库按用户隔离：SQL 层严格过滤（LIMIT 之前），只保留当前用户
+    // 创建、且 externalUserId/externalTenantId 精确匹配的会话。无外部
+    // 元数据的旧会话不返回（userId 为空时不传 externalUser，上层负责拦截）。
     conditions.push(
       and(
-        or(
-          eq(sql`json_extract(${SessionTable.metadata}, '$.externalUserId')`, input.externalUser.userId),
-          isNull(sql`json_extract(${SessionTable.metadata}, '$.externalUserId')`),
-        ),
-        or(
-          eq(sql`json_extract(${SessionTable.metadata}, '$.externalTenantId')`, input.externalUser.tenantId),
-          isNull(sql`json_extract(${SessionTable.metadata}, '$.externalUserId')`),
-        ),
+        eq(sql`json_extract(${SessionTable.metadata}, '$.externalUserId')`, input.externalUser.userId),
+        eq(sql`json_extract(${SessionTable.metadata}, '$.externalTenantId')`, input.externalUser.tenantId),
       )!,
     )
   }

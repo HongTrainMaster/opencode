@@ -24,7 +24,7 @@ function makeSession(id: string, userId?: string, tenantId?: string) {
 }
 
 describe("filterSessionsByExternalUser", () => {
-  it("keeps the current user's sessions and legacy sessions without metadata", () => {
+  it("strictly keeps only the current user's sessions, dropping legacy sessions without metadata", () => {
     const sessions = [
       makeSession("ses_own", "user_1", "tenant_01"),
       makeSession("ses_other", "user_2", "tenant_02"),
@@ -38,8 +38,8 @@ describe("filterSessionsByExternalUser", () => {
     const ids = filtered.map((s) => (s as { id: string }).id)
     expect(ids).toContain("ses_own")
     expect(ids).not.toContain("ses_other")
-    // 无 metadata 的旧会话保留，避免隐藏既有历史
-    expect(ids).toContain("ses_legacy")
+    // 严格隔离：无 metadata 的旧会话不返回，避免不同用户互相看到
+    expect(ids).not.toContain("ses_legacy")
   })
 
   it("filters out other users even with same tenant", () => {

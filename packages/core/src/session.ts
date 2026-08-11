@@ -3,7 +3,7 @@ export * from "./session/schema"
 
 import { DateTime, Effect, Layer, Schema, Context, Stream } from "effect"
 import { ListAnchor } from "@opencode-ai/schema/session"
-import { and, asc, desc, eq, gt, like, lt, or, type SQL } from "drizzle-orm"
+import { and, asc, desc, eq, gt, like, lt, or, sql, type SQL } from "drizzle-orm"
 import { ProjectV2 } from "./project"
 import { WorkspaceV2 } from "./workspace"
 import { ModelV2 } from "./model"
@@ -111,8 +111,17 @@ export type MessageNotFoundError = SessionRevert.MessageNotFoundError
 
 export type Error = NotFoundError | MessageDecodeError | OperationUnavailableError | PromptConflictError
 
+export type ListWithExternalUser = ListInput & {
+  /**
+   * 知识库按用户隔离：只返回该外部用户创建的会话（metadata.externalUserId/
+   * externalTenantId 精确匹配）。过滤在 SQL 层完成，在 LIMIT 之前生效。
+   * 由调用方（knowledge handler）根据已解析的外部身份传入。
+   */
+  readonly externalUser?: { readonly userId: string; readonly tenantId: string }
+}
+
 export interface Interface {
-  readonly list: (input?: ListInput) => Effect.Effect<SessionSchema.Info[]>
+  readonly list: (input?: ListWithExternalUser) => Effect.Effect<SessionSchema.Info[]>
   readonly create: (input: CreateInput) => Effect.Effect<SessionSchema.Info>
   readonly get: (sessionID: SessionSchema.ID) => Effect.Effect<SessionSchema.Info, NotFoundError>
   readonly messages: (input: {
@@ -277,6 +286,16 @@ const layer = Layer.effect(
         if (input.workspaceID) conditions.push(eq(SessionTable.workspace_id, input.workspaceID))
         if ("project" in input) conditions.push(eq(SessionTable.project_id, input.project))
         if (input.search) conditions.push(like(SessionTable.title, `%${input.search}%`))
+        if (input.externalUser) {
+          // 知识库按用户隔离：SQL 层严格过滤（LIMIT 之前），只保留当前用户
+          // 创建、且 externalUserId/externalTenantId 精确匹配的会话。
+          conditions.push(
+            and(
+              eq(sql`json_extract(${SessionTable.metadata}, '$.externalUserId')`, input.externalUser.userId),
+              eq(sql`json_extract(${SessionTable.metadata}, '$.externalTenantId')`, input.externalUser.tenantId),
+            )!,
+          )
+        }
         if (input.anchor) {
           conditions.push(
             order === "asc"

@@ -1,6 +1,10 @@
-import { describe, expect, it } from "bun:test"
+import { afterEach, describe, expect, it } from "bun:test"
 import { ConfigProvider, Effect, Layer } from "effect"
-import { ExternalAuthConfig } from "./external-config"
+import { ExternalAuthConfig, isKnowledgeMode } from "./external-config"
+
+afterEach(() => {
+  delete process.env.KNOWLEDGE_SESSION_ISOLATION
+})
 
 describe("ExternalAuthConfig", () => {
   it("defaults to /api when env var is not set", () => {
@@ -65,5 +69,22 @@ describe("ExternalAuthConfig", () => {
       }).pipe(Effect.provide(customLayer)),
     )
     expect(result).toBe("https://custom/api")
+  })
+})
+
+describe("isKnowledgeMode", () => {
+  it("is false when KNOWLEDGE_SESSION_ISOLATION is not set", () => {
+    delete process.env.KNOWLEDGE_SESSION_ISOLATION
+    expect(isKnowledgeMode()).toBe(false)
+  })
+
+  it("is true when KNOWLEDGE_SESSION_ISOLATION=true", () => {
+    process.env.KNOWLEDGE_SESSION_ISOLATION = "true"
+    expect(isKnowledgeMode()).toBe(true)
+  })
+
+  it("is false for other values", () => {
+    process.env.KNOWLEDGE_SESSION_ISOLATION = "1"
+    expect(isKnowledgeMode()).toBe(false)
   })
 })

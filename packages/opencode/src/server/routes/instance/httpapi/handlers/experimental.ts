@@ -14,6 +14,8 @@ import { Worktree } from "@/worktree"
 import { Effect, Option } from "effect"
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse"
 import { HttpApiBuilder, HttpApiError } from "effect/unstable/httpapi"
+import { ExternalIdentity } from "@opencode-ai/server/auth/external-identity"
+import { isKnowledgeMode } from "@opencode-ai/server/auth/external-config"
 import { InstanceHttpApi } from "../api"
 import { ConsoleSwitchPayload, SessionListQuery, ToolListQuery, WorktreeApiError } from "../groups/experimental"
 
@@ -138,6 +140,32 @@ export const experimentalHandlers = HttpApiBuilder.group(InstanceHttpApi, "exper
     const session = Effect.fn("ExperimentalHttpApi.session")(function* (ctx: { query: typeof SessionListQuery.Type }) {
       const limit = ctx.query.limit ?? 100
       const directory = ctx.query.directory ? yield* InstanceState.directory : undefined
+      // 知识库模式：匿名/无效身份 → 空列表；否则按用户严格过滤（listGlobal SQL 层，
+      // LIMIT 之前）。普通 opencode 模式：不过滤，保持原行为。
+      if (isKnowledgeMode()) {
+        const identity = yield* Effect.serviceOption(ExternalIdentity)
+        const ident = identity._tag === "Some" ? identity.value : undefined
+        if (!ident?.userId) {
+          return HttpServerResponse.jsonUnsafe([])
+        }
+        const all = yield* sessions.listGlobal({
+          directory,
+          roots: ctx.query.roots,
+          start: ctx.query.start,
+          cursor: ctx.query.cursor,
+          search: ctx.query.search,
+          limit: limit + 1,
+          archived: ctx.query.archived,
+          externalUser: { userId: ident.userId, tenantId: ident.tenantId },
+        })
+        const list = all.length > limit ? all.slice(0, limit) : all
+        return HttpServerResponse.jsonUnsafe(list, {
+          headers:
+            all.length > limit && list.length > 0
+              ? { "x-next-cursor": String(list[list.length - 1].time.updated) }
+              : undefined,
+        })
+      }
       const all = yield* sessions.listGlobal({
         directory,
         roots: ctx.query.roots,

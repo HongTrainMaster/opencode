@@ -16,6 +16,7 @@ import { SessionSummary } from "@/session/summary"
 import { Todo } from "@/session/todo"
 import { MessageID, PartID, SessionID } from "@/session/schema"
 import { ExternalIdentity } from "@opencode-ai/server/auth/external-identity"
+import { isKnowledgeMode } from "@opencode-ai/server/auth/external-config"
 import { NamedError } from "@opencode-ai/core/util/error"
 import { Cause, Effect, Option, Schema, Scope } from "effect"
 import * as Stream from "effect/Stream"
@@ -47,12 +48,9 @@ const tryParseJson = (text: string) =>
   })
 
 /**
- * 按外部知识库用户过滤会话列表：只保留
- * 1. 当前用户创建的会话（metadata.externalUserId/externalTenantId 精确匹配）
- * 2. 无知识库 metadata 的会话（旧数据/非知识库场景），避免隐藏既有历史
- *
- * 新代码优先用 Session.list({ externalUser }) 在 SQL 层过滤（LIMIT 之前）；
- * 该函数保留给仍需要内存兜底的调用方。
+ * 按外部知识库用户严格过滤会话：只保留当前用户创建、且
+ * metadata.externalUserId/externalTenantId 精确匹配的会话。
+ * 无外部元数据的旧会话不返回（严格隔离）。
  */
 export function filterSessionsByExternalUser<T extends { metadata?: Record<string, unknown> | undefined }>(
   sessions: readonly T[],
@@ -60,9 +58,7 @@ export function filterSessionsByExternalUser<T extends { metadata?: Record<strin
   tenantId: string,
 ): T[] {
   return sessions.filter(
-    (s) =>
-      (s.metadata?.externalUserId === userId && s.metadata?.externalTenantId === tenantId) ||
-      !s.metadata?.externalUserId,
+    (s) => s.metadata?.externalUserId === userId && s.metadata?.externalTenantId === tenantId,
   )
 }
 
@@ -84,15 +80,42 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
 
     const list = Effect.fn("SessionHttpApi.list")(function* (ctx: { query: typeof ListQuery.Type }) {
       const directory = ctx.query.directory ? yield* InstanceState.directory : undefined
-      // 知识库（ExternalIdentity 服务存在且已解析 userId）场景：按用户隔离会话，
-      // 过滤在 SQL 层完成（LIMIT 之前），避免其他用户会话挤掉当前用户历史。
-      // 普通 opencode 场景（服务缺失/无 userId）不过滤，保持原行为。
       const identity = yield* Effect.serviceOption(ExternalIdentity)
-      const externalUser =
-        identity._tag === "Some" && identity.value.userId
-          ? { userId: identity.value.userId, tenantId: identity.value.tenantId }
-          : undefined
-      return yield* session.list({
+      // 历史会话查询诊断日志：记录谁在查、请求参数、过滤是否生效、返回多少条。
+      // 用于排查多用户会话隔离问题（是谁查到了谁的会话）。
+      const log = (filtered: boolean, returned: number) =>
+        Effect.logInfo("session.list", {
+          directory,
+          identity: identity._tag === "Some" ? identity.value.userId : undefined,
+          tenant: identity._tag === "Some" ? identity.value.tenantId : undefined,
+          filtered,
+          limit: ctx.query.limit,
+          roots: ctx.query.roots ?? false,
+          returned,
+        })
+      // 知识库模式：严格按用户隔离（SQL 层，LIMIT 之前）。无有效身份（匿名/
+      // 失效 token）→ 返回空列表，避免看到任何用户的会话。
+      const ident = identity._tag === "Some" ? identity.value : undefined
+      if (isKnowledgeMode()) {
+        if (!ident?.userId) {
+          yield* log(true, 0)
+          return []
+        }
+        const sessions = yield* session.list({
+          directory: ctx.query.scope === "project" ? undefined : directory,
+          scope: ctx.query.scope,
+          path: ctx.query.path,
+          roots: ctx.query.roots,
+          start: ctx.query.start,
+          search: ctx.query.search,
+          limit: ctx.query.limit,
+          externalUser: { userId: ident.userId, tenantId: ident.tenantId },
+        })
+        yield* log(true, sessions.length)
+        return sessions
+      }
+      // 普通 opencode 模式：不过滤，保持原行为。
+      const sessions = yield* session.list({
         directory: ctx.query.scope === "project" ? undefined : directory,
         scope: ctx.query.scope,
         path: ctx.query.path,
@@ -100,16 +123,63 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
         start: ctx.query.start,
         search: ctx.query.search,
         limit: ctx.query.limit,
-        externalUser,
       })
+      yield* log(false, sessions.length)
+      return sessions
     })
 
     const status = Effect.fn("SessionHttpApi.status")(function* () {
-      return Object.fromEntries(yield* statusSvc.list())
+      const all = yield* statusSvc.list()
+      if (!isKnowledgeMode()) return Object.fromEntries(all)
+      // 知识库模式：只返回本人会话的运行状态，避免向他人暴露会话存在性/运行状态。
+      const identity = yield* Effect.serviceOption(ExternalIdentity)
+      const ident = identity._tag === "Some" ? identity.value : undefined
+      if (!ident?.userId) return {}
+      const owned = new Map<string, SessionStatus.Info>()
+      for (const [sessionID, info] of all) {
+        const infoOpt = yield* session.get(sessionID).pipe(Effect.option)
+        if (infoOpt._tag === "None") continue
+        const meta = infoOpt.value.metadata ?? {}
+        if (meta.externalUserId === ident.userId && meta.externalTenantId === ident.tenantId) {
+          owned.set(sessionID, info)
+        }
+      }
+      return Object.fromEntries(owned)
     })
 
     const requireSession = Effect.fn("SessionHttpApi.requireSession")(function* (sessionID: SessionID) {
-      return yield* SessionError.mapStorageNotFound(session.get(sessionID))
+      const info = yield* SessionError.mapStorageNotFound(session.get(sessionID))
+      // 知识库模式：会话级接口只允许属主访问。无身份/身份不匹配 → 拒绝。
+      // 普通 opencode 模式：保持原行为，不校验。
+      if (!isKnowledgeMode()) return info
+      const identity = yield* Effect.serviceOption(ExternalIdentity)
+      const ident = identity._tag === "Some" ? identity.value : undefined
+      // 无身份或不是会话属主 → 401（Unauthorized 已在 ExternalAuth middleware 声明，所有端点可用）。
+      if (!ident?.userId) return yield* new HttpApiError.Unauthorized({})
+      const meta = info.metadata ?? {}
+      if (meta.externalUserId !== ident.userId || meta.externalTenantId !== ident.tenantId) {
+        return yield* new HttpApiError.Unauthorized({})
+      }
+      return info
+    })
+
+    /**
+     * 仅校验会话属主（知识库模式），不校验存在性——不存在/无身份/非属主统一
+     * 返回 401，不暴露会话存在性。只产出 Unauthorized（ExternalAuth middleware
+     * 已将其合并到所有端点），因此可用于未声明 ApiNotFoundError 的端点
+     * （如 diff、abort）。普通 opencode 模式为 no-op。
+     */
+    const assertSessionOwner = Effect.fn("SessionHttpApi.assertSessionOwner")(function* (sessionID: SessionID) {
+      if (!isKnowledgeMode()) return
+      const identity = yield* Effect.serviceOption(ExternalIdentity)
+      const ident = identity._tag === "Some" ? identity.value : undefined
+      if (!ident?.userId) return yield* new HttpApiError.Unauthorized({})
+      const infoOpt = yield* session.get(sessionID).pipe(Effect.option)
+      if (infoOpt._tag === "None") return yield* new HttpApiError.Unauthorized({})
+      const meta = infoOpt.value.metadata ?? {}
+      if (meta.externalUserId !== ident.userId || meta.externalTenantId !== ident.tenantId) {
+        return yield* new HttpApiError.Unauthorized({})
+      }
     })
 
     const get = Effect.fn("SessionHttpApi.get")(function* (ctx: { params: { sessionID: SessionID } }) {
@@ -130,6 +200,7 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
       params: { sessionID: SessionID }
       query: typeof DiffQuery.Type
     }) {
+      yield* assertSessionOwner(ctx.params.sessionID)
       return yield* summary.diff({ sessionID: ctx.params.sessionID, messageID: ctx.query.messageID })
     })
 
@@ -177,24 +248,30 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
     const message = Effect.fn("SessionHttpApi.message")(function* (ctx: {
       params: { sessionID: SessionID; messageID: MessageID }
     }) {
+      yield* requireSession(ctx.params.sessionID)
       return yield* SessionError.mapStorageNotFound(
         MessageV2.get({ sessionID: ctx.params.sessionID, messageID: ctx.params.messageID }),
       )
     })
 
     const create = Effect.fn("SessionHttpApi.create")(function* (ctx: { payload?: Session.CreateInput }) {
+      const identity = yield* Effect.serviceOption(ExternalIdentity)
+      const ident = identity._tag === "Some" ? identity.value : undefined
+      // 知识库模式：无有效身份拒绝创建，避免产生无属主、所有人不可见的孤儿会话。
+      if (isKnowledgeMode() && !ident?.userId) {
+        return yield* new HttpApiError.Unauthorized({})
+      }
       // 知识库场景：原生 create 也写入外部身份 metadata，使 session.list 的
       // externalUser 过滤（SQL 层）能正确隔离历史会话。
-      const identity = yield* Effect.serviceOption(ExternalIdentity)
       const payload =
-        identity._tag === "Some" && identity.value.userId
+        ident?.userId
           ? {
               ...ctx.payload,
               metadata: {
                 ...(ctx.payload?.metadata ?? {}),
-                externalUserId: identity.value.userId,
-                externalTenantId: identity.value.tenantId,
-                externalNickName: identity.value.nickName,
+                externalUserId: ident.userId,
+                externalTenantId: ident.tenantId,
+                externalNickName: ident.nickName,
               },
             }
           : ctx.payload
@@ -221,6 +298,7 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
     })
 
     const remove = Effect.fn("SessionHttpApi.remove")(function* (ctx: { params: { sessionID: SessionID } }) {
+      yield* requireSession(ctx.params.sessionID)
       yield* SessionError.mapStorageNotFound(session.remove(ctx.params.sessionID))
       return true
     })
@@ -252,6 +330,7 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
       params: { sessionID: SessionID }
       payload?: typeof ForkPayload.Type
     }) {
+      yield* requireSession(ctx.params.sessionID)
       return yield* SessionError.mapStorageNotFound(
         session.fork({
           sessionID: ctx.params.sessionID,
@@ -275,6 +354,7 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
     })
 
     const abort = Effect.fn("SessionHttpApi.abort")(function* (ctx: { params: { sessionID: SessionID } }) {
+      yield* assertSessionOwner(ctx.params.sessionID)
       yield* promptSvc.cancel(ctx.params.sessionID)
       return true
     })

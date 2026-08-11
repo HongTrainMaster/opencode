@@ -251,13 +251,13 @@ describe("Session", () => {
     }),
   )
 
-  it.instance("list filters by externalUser in SQL, before limit is applied", () =>
+  it.instance("list filters by externalUser strictly in SQL, before limit is applied", () =>
     Effect.gen(function* () {
       const session = yield* SessionNs.Service
       const meta = (userId: string, tenantId: string) => ({ externalUserId: userId, externalTenantId: tenantId })
       const cleanup = (info: SessionNs.Info) => session.remove(info.id).pipe(Effect.ignore)
 
-      // 当前用户 + 其他用户 + 无 external 元数据的旧会话
+      // 当前用户 + 其他用户 + 无 external 元数据的旧会话（严格过滤下不返回）
       yield* Effect.acquireRelease(session.create({ title: "own", metadata: meta("user_1", "tenant_01") }), cleanup)
       yield* Effect.acquireRelease(session.create({ title: "other", metadata: meta("user_2", "tenant_02") }), cleanup)
       yield* Effect.acquireRelease(session.create({ title: "legacy" }), cleanup)
@@ -271,9 +271,49 @@ describe("Session", () => {
 
       const own = yield* session.list({ externalUser: { userId: "user_1", tenantId: "tenant_01" }, limit: 5 })
       const titles = own.map((s) => s.title).sort()
-      // 过滤必须在 limit 之前：即使其他用户会话超过 limit，也只返回自己 + legacy
-      expect(titles).toEqual(["legacy", "own"])
-      expect(own.every((s) => s.title !== "other" && !s.title.startsWith("other-"))).toBe(true)
+      // 严格过滤 + 过滤在 limit 之前：即使其他用户会话超过 limit，也只返回自己的
+      expect(titles).toEqual(["own"])
+    }),
+  )
+
+  it.instance("listGlobal filters by externalUser in SQL", () =>
+    Effect.gen(function* () {
+      const session = yield* SessionNs.Service
+      const meta = (userId: string, tenantId: string) => ({ externalUserId: userId, externalTenantId: tenantId })
+      const cleanup = (info: SessionNs.Info) => session.remove(info.id).pipe(Effect.ignore)
+
+      yield* Effect.acquireRelease(session.create({ title: "g-own", metadata: meta("user_1", "tenant_01") }), cleanup)
+      yield* Effect.acquireRelease(session.create({ title: "g-other", metadata: meta("user_2", "tenant_02") }), cleanup)
+
+      const own = yield* session.listGlobal({
+        externalUser: { userId: "user_1", tenantId: "tenant_01" },
+        limit: 100,
+      })
+      const titles = own.map((s) => s.title)
+      expect(titles).toContain("g-own")
+      expect(titles).not.toContain("g-other")
+    }),
+  )
+
+  it.instance("list excludes archived sessions by default and includes them when archived=true", () =>
+    Effect.gen(function* () {
+      const session = yield* SessionNs.Service
+      const cleanup = (info: SessionNs.Info) => session.remove(info.id).pipe(Effect.ignore)
+
+      const active = yield* Effect.acquireRelease(session.create({ title: "active" }), cleanup)
+      const archived = yield* Effect.acquireRelease(session.create({ title: "archived-one" }), cleanup)
+
+      yield* session.setArchived({ sessionID: archived.id, time: Date.now() })
+
+      const defaultList = yield* session.list({})
+      const withArchived = yield* session.list({ archived: true })
+      const titlesDefault = defaultList.map((s) => s.title)
+      const titlesArchived = withArchived.map((s) => s.title)
+
+      expect(titlesDefault).not.toContain("archived-one")
+      expect(titlesDefault).toContain("active")
+      expect(titlesArchived).toContain("archived-one")
+      expect(active).toBeTruthy()
     }),
   )
 })

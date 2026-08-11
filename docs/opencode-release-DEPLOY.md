@@ -118,15 +118,30 @@ systemctl enable --now opencode-server
 ### 3.2.1 历史会话按用户隔离（会话串线修复）
 
 前端历史会话列表走原生 `GET /session` 接口，**必须带业务系统 JWT**（`Authorization: Bearer <jwt>` 请求头，
-iframe URL 的 `Authorization`/`auth_token` 参数会自动透传）。服务端按 JWT 里的 userId/tenantId 隔离会话：
+iframe URL 的 `Authorization`/`auth_token` 参数会自动透传）。服务端按 JWT 里的 userId/tenantId 隔离会话。
 
-- **列表**：`session.list` 在 SQL 层按 `externalUserId`/`externalTenantId` 过滤（LIMIT 之前），
-  只返回当前用户的会话 + 无外部元数据的旧会话。
+**⚠️ 必须同时配置以下两个 Environment（否则隔离不生效 或 身份校验失败）：**
+
+| 环境变量 | 值 | 说明 |
+|---|---|---|
+| `KNOWLEDGE_SESSION_ISOLATION` | `true` | **会话隔离总开关**，知识库部署必须显式开启 |
+| `KNOWLEDGE_JWT_SECRET` | 业务系统 sa-token 的 `jwt-secret-key`（如 `abcdefghijklmnopqrstuvwxyz`） | JWT **签名校验密钥**（HS256） |
+
+> ⚠️ **签名校验是安全底线**：服务端对每个 JWT 做 HS256 签名 + `exp` 过期校验，**不再信任未验签的
+> claims**。未配置 `KNOWLEDGE_JWT_SECRET` 时所有 JWT 认证会 fail-closed（身份为空 → 会话列表返回空），
+> 而不是放行。若 `KNOWLEDGE_API_BASE_URL` 已设置但未开隔离，服务启动日志会输出醒目 WARN 提醒。
+
+**隔离语义：**
+
+- **列表**：`session.list` 在 SQL 层按 `externalUserId`/`externalTenantId` 严格过滤（LIMIT 之前），
+  只返回当前用户创建的会话。**无外部元数据的旧会话/系统内部会话（wiki/ppt/ingest）不返回**。
 - **创建**：原生 `POST /session` 在已认证知识库用户下自动写入 `externalUserId`/`externalTenantId`
-  metadata，新会话天然归属当前用户。
+  metadata，新会话天然归属当前用户；匿名创建被拒绝（401）。
+- **会话级访问**：`get/messages/fork/update/remove/prompt/command/shell/share/unshare/summarize` 等
+  所有按会话 ID 的接口都校验属主——匿名或非属主一律 401，用户无法凭 ID 读取/篡改他人会话。
+- **其他入口**：`/experimental/session`（listGlobal）、`/serve/api/knowledge/session/list` 同样按用户过滤。
 
 **部署前提**：必须使用 `80129478cc` 之后的二进制（`47613a8225` 及更早没有该功能，会话会串线）。
-旧会话（发布前创建、无 metadata）对所有用户可见，属预期兼容行为。
 
 ### 3.3 OCR 兜底（doc-parser）
 内置解析（txt/md/pdf文本层/docx）拿不到文本时自动调 tesseract OCR：
@@ -160,11 +175,18 @@ grep '"bjj"' /home/bjglj/.config/opencode/opencode.jsonc   # 期望: "bjj": {
 systemctl show opencode-server -p Environment | tr ' ' '\n' | grep WIKI_LLM
 # 期望: WIKI_LLM_PROVIDER=bjj  WIKI_LLM_MODEL=nvidia/Qwen3.6-35B-A3B-NVFP4
 
-# 5.1 历史会话按用户隔离
+# 5.1 会话隔离环境变量（必须都在）
+systemctl show opencode-server -p Environment | tr ' ' '\n' | grep -E 'KNOWLEDGE_SESSION_ISOLATION|KNOWLEDGE_JWT_SECRET'
+# 期望: KNOWLEDGE_SESSION_ISOLATION=true 和 KNOWLEDGE_JWT_SECRET=<jwt-secret-key>
+
+# 5.2 历史会话按用户隔离
 #   用两个不同用户的 JWT 分别请求，返回的会话列表应互不包含对方。
 #   <jwt1>/<jwt2> 替换为两个不同业务用户的 JWT；<dir> 为知识库工作目录。
 curl -H "Authorization: Bearer <jwt1>" "http://localhost:4096/session?directory=<dir>&limit=50&roots=true" | jq 'length'
 curl -H "Authorization: Bearer <jwt2>" "http://localhost:4096/session?directory=<dir>&limit=50&roots=true" | jq 'length'
+
+# 5.3 匿名请求看不到任何会话（隔离必须 deny-by-default）
+curl "http://localhost:4096/session?directory=<dir>&limit=50&roots=true" | jq 'length'   # 期望: 0
 
 # 6. 前端
 curl -s -o /dev/null -w "%{http_code}" http://<host>/opencode/   # 期望: 200
@@ -181,6 +203,8 @@ curl -s -o /dev/null -w "%{http_code}" http://<host>/opencode/   # 期望: 200
 | 业务 API 404 | KNOWLEDGE_API_BASE_URL 指向错误 | 修改 Environment 后重启 |
 | 前端 404 | SPA 未部署到 nginx html | 重新 `cp -r /tmp/release/spa/. <nginx html>/opencode/` |
 | 历史会话串线（A 用户看到 B 用户的会话） | 二进制是 `47613a8225` 或更早（无按用户隔离） | 用 `80129478cc` 之后的新包重新部署并重启 |
+| 会话列表为空/历史不见了 | 隔离已开启但未配置 `KNOWLEDGE_JWT_SECRET`，JWT 校验 fail-closed（身份为空） | 配置 `KNOWLEDGE_JWT_SECRET=<jwt-secret-key>` 后重启 |
+| 匿名/不带 token 能看全部会话 | 未开启隔离（缺 `KNOWLEDGE_SESSION_ISOLATION=true`），启动日志有 WARN | 补配 `KNOWLEDGE_SESSION_ISOLATION=true` 后重启 |
 | 改配置不生效 | 未重启服务 | 配置进程启动时加载，必须 `systemctl restart` |
 
 ---

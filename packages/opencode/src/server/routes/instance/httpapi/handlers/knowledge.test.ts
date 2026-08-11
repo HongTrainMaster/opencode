@@ -73,7 +73,17 @@ const mockSessionOther = SessionSchema.Info.make({
 const mockSessionLayer = Layer.succeed(
   SessionV2.Service,
   SessionV2.Service.of({
-    list: () => Effect.succeed([mockSessionOwned, mockSessionOther]),
+    // 与真实 SQL 严格过滤语义一致：只返回当前用户创建的会话。
+    list: (input?: { externalUser?: { userId: string; tenantId: string } }) =>
+      Effect.succeed(
+        input?.externalUser
+          ? [mockSessionOwned, mockSessionOther].filter(
+              (s) =>
+                s.metadata?.externalUserId === input.externalUser?.userId &&
+                s.metadata?.externalTenantId === input.externalUser?.tenantId,
+            )
+          : [mockSessionOwned, mockSessionOther],
+      ),
     get: (id) => {
       if (id === "ses_owned") return Effect.succeed(mockSessionOwned)
       if (id === "ses_other") return Effect.succeed(mockSessionOther)

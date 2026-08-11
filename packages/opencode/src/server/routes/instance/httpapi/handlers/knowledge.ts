@@ -32,16 +32,20 @@ export const KnowledgeSessionHandler = HttpApiBuilder.group(
             const sessions = yield* session.list({
               directory: workspaceRef.directory,
               limit: ctx.query.limit ?? 50,
+              // 与原生 session.list 一致：SQL 层按用户严格过滤（LIMIT 之前）。
+              externalUser: { userId: identity.userId, tenantId: identity.tenantId },
             }).pipe(
               Effect.catchCause(() => Effect.succeed([] as Array<any>)),
             )
-            // Filter by external identity metadata
-            const filtered = sessions.filter(
-              (s) =>
-                s.metadata?.externalUserId === identity.userId &&
-                s.metadata?.externalTenantId === identity.tenantId,
-            )
-            return { data: filtered.map((s) => JSON.parse(JSON.stringify(s))) }
+            yield* Effect.logInfo("knowledge.session.list", {
+              userId: identity.userId,
+              tenantId: identity.tenantId,
+              workspaceId: ctx.query.workspaceId,
+              directory: workspaceRef.directory,
+              limit: ctx.query.limit ?? 50,
+              returned: sessions.length,
+            })
+            return { data: sessions.map((s) => JSON.parse(JSON.stringify(s))) }
           }),
         )
         .handle(
