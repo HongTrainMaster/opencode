@@ -31,6 +31,7 @@ import { LocationMiddleware } from "@opencode-ai/server/location"
 import { SessionLocationMiddleware } from "@opencode-ai/server/middleware/session-location"
 import { GlobalApi } from "./groups/global"
 import { Authorization } from "./middleware/authorization"
+import { ExternalAuth } from "@opencode-ai/server/middleware/external-auth"
 import { SchemaErrorMiddleware } from "./middleware/schema-error"
 
 const EventSchema = Schema.Union([
@@ -76,6 +77,9 @@ export const InstanceHttpApi = HttpApi.make("opencode-instance")
   .addHttpApi(TuiApi)
   .addHttpApi(WorkspaceApi)
   .middleware(SchemaErrorMiddleware)
+  // 知识库场景：原生 session.list 等接口也需要解析外部身份（按用户隔离历史会话）。
+  // 无 token 时 fallback 匿名身份（userId 为空），session.list 不过滤，普通 opencode 场景不受影响。
+  .middleware(ExternalAuth)
 
 export const OpenCodeHttpApi = HttpApi.make("opencode")
   .addHttpApi(RootHttpApi)

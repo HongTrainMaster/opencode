@@ -328,10 +328,6 @@ export function createRoutes(
     Layer.provide(PptGenService.layer),
     Layer.provide(PptCoverService.layer),
     Layer.provideMerge(graphStoreLayer),
-    Layer.provide(externalAuthLayer),
-    Layer.provide(KnowledgeAdapterLayer),
-    Layer.provide(ExternalAuthConfig.layer),
-    Layer.provide(Layer.succeed(ExternalIdentity, ExternalIdentity.of(fallbackIdentity))),
     Layer.provide(schemaErrorLayer),
   )
 
@@ -358,6 +354,13 @@ export function createRoutes(
     Layer.provide(sessionLocationLayer),
     Layer.provide(locationLayer),
     Layer.provide(PtyEnvironment.layer),
+    // ExternalAuth 全局提供：knowledge 专用接口与原生 session.list 都能解析
+    // 知识库外部身份（ExternalIdentity），供按用户过滤历史会话。无 token 时
+    // fallback 匿名身份（userId 为空），普通 opencode 场景不受影响。
+    Layer.provide(externalAuthLayer),
+    Layer.provide(KnowledgeAdapterLayer),
+    Layer.provide(ExternalAuthConfig.layer),
+    Layer.provide(Layer.succeed(ExternalIdentity, ExternalIdentity.of(fallbackIdentity))),
     Layer.provide(
       AppNodeBuilderV1.build(SessionV2.node, [
         [LocationServiceMap.node, locationServiceMapV2],

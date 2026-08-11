@@ -15,6 +15,7 @@ import { SessionStatus } from "@/session/status"
 import { SessionSummary } from "@/session/summary"
 import { Todo } from "@/session/todo"
 import { MessageID, PartID, SessionID } from "@/session/schema"
+import { ExternalIdentity } from "@opencode-ai/server/auth/external-identity"
 import { NamedError } from "@opencode-ai/core/util/error"
 import { Cause, Effect, Option, Schema, Scope } from "effect"
 import * as Stream from "effect/Stream"
@@ -45,6 +46,23 @@ const tryParseJson = (text: string) =>
     catch: () => new HttpApiError.BadRequest({}),
   })
 
+/**
+ * 按外部知识库用户过滤会话列表：只保留
+ * 1. 当前用户创建的会话（metadata.externalUserId/externalTenantId 精确匹配）
+ * 2. 无知识库 metadata 的会话（旧数据/非知识库场景），避免隐藏既有历史
+ */
+export function filterSessionsByExternalUser<T extends { metadata?: Record<string, unknown> | undefined }>(
+  sessions: readonly T[],
+  userId: string,
+  tenantId: string,
+): T[] {
+  return sessions.filter(
+    (s) =>
+      (s.metadata?.externalUserId === userId && s.metadata?.externalTenantId === tenantId) ||
+      !s.metadata?.externalUserId,
+  )
+}
+
 export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", (handlers) =>
   Effect.gen(function* () {
     const session = yield* Session.Service
@@ -63,7 +81,7 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
 
     const list = Effect.fn("SessionHttpApi.list")(function* (ctx: { query: typeof ListQuery.Type }) {
       const directory = ctx.query.directory ? yield* InstanceState.directory : undefined
-      return yield* session.list({
+      const sessions = yield* session.list({
         directory: ctx.query.scope === "project" ? undefined : directory,
         scope: ctx.query.scope,
         path: ctx.query.path,
@@ -72,6 +90,16 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
         search: ctx.query.search,
         limit: ctx.query.limit,
       })
+      // 知识库（ExternalIdentity 服务存在且已解析 userId）场景：按用户隔离会话。
+      // 普通 opencode 场景（服务缺失/无 userId）不过滤，保持原行为。
+      const identity = yield* Effect.serviceOption(ExternalIdentity)
+      if (identity._tag === "Some") {
+        const { userId, tenantId } = identity.value
+        if (userId) {
+          return filterSessionsByExternalUser(sessions, userId, tenantId)
+        }
+      }
+      return sessions
     })
 
     const status = Effect.fn("SessionHttpApi.status")(function* () {
