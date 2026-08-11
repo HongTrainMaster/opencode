@@ -82,14 +82,28 @@ async function decodeUserInfoFromVerifiedToken(token: string): Promise<DecodedUs
   const verified = await verifyJwt(token, verifierConfig)
   if (!verified) return undefined
   const payload = verified.payload
-  if (payload.userId && payload.userName) {
+  // userId/userName/tenantId 来自已验证的 payload。注意：业务系统 user_id 是
+  // 19 位大整数（> 2^53），JWT payload 里以 JSON number 表示，JS JSON.parse 会
+  // 丢失精度。因此优先用 loginId（"sys_user:1966044826377150466"，字符串，无精度
+  // 损失）提取精确 userId；仅当 loginId 不可用时回退到 payload.userId。
+  const loginIdUserId = extractUserIdFromLoginId(payload)
+  const userId = loginIdUserId ?? payload.userId
+  if (userId && payload.userName) {
     return {
-      userId: String(payload.userId),
+      userId: String(userId),
       userName: String(payload.userName),
       tenantId: String(payload.tenantId ?? "000000"),
     }
   }
   return undefined
+}
+
+/** 从 sa-token 的 loginId（"sys_user:1966044826377150466"）提取精确 userId。 */
+function extractUserIdFromLoginId(payload: Record<string, unknown>): string | undefined {
+  const loginId = payload.loginId
+  if (typeof loginId !== "string") return undefined
+  const sep = loginId.lastIndexOf(":")
+  return sep === -1 ? undefined : loginId.slice(sep + 1)
 }
 
 // -- API calls --
@@ -150,13 +164,16 @@ export const KnowledgeAdapterLayer = Layer.effect(
 
     const authenticate: ExternalIdentityAdapter["authenticate"] = (token, clientId?) =>
       Effect.gen(function* () {
+        console.log(`[knowledge-adapter] authenticate called token=${token.slice(0, 25)}... clientId=${clientId ?? ""}`)
         // Check cache (keyed by the full token; the token is the proof of
         // identity, so the raw string is the correct cache key).
         const key = token
         const cached = identityCache.get(key)
         if (cached && cached.expiresAt > Date.now()) {
+          console.log(`[knowledge-adapter] cache hit userId=${cached.identity.userId}`)
           return cached.identity
         }
+        console.log(`[knowledge-adapter] cache miss`)
 
         // Verify signature + exp/nbf first. Unverifiable tokens never yield a
         // real identity (fail-closed).
@@ -179,6 +196,7 @@ export const KnowledgeAdapterLayer = Layer.effect(
           userName: decoded.userName,
           tenantId: decoded.tenantId,
         })
+        console.log(`[knowledge-adapter] JWT verified userId=${decoded.userId} userName=${decoded.userName} tenantId=${decoded.tenantId}`)
 
         // Fetch workspaces from business system; callGetKnowledge already
         // handles all errors internally (Effect.option → empty on failure).

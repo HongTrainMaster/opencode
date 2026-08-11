@@ -74,9 +74,13 @@ export const externalAuthLayer = Layer.effect(
           })
           return yield* effect
         }
+        console.log(`[external-auth] path=${path} token=${token.slice(0, 25)}... clientId=${clientId ?? ""}`)
 
         const maybeAdapter = yield* Effect.serviceOption(ExternalIdentityAdapterTag)
-        if (maybeAdapter._tag === "None") return yield* effect
+        if (maybeAdapter._tag === "None") {
+          console.log(`[external-auth] no adapter, skipping identity resolution for ${path}`)
+          return yield* effect
+        }
 
         const info = yield* maybeAdapter.value.authenticate(token, clientId).pipe(
           Effect.catchCause((cause) =>

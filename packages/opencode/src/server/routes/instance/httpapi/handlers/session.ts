@@ -82,17 +82,11 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
       const directory = ctx.query.directory ? yield* InstanceState.directory : undefined
       const identity = yield* Effect.serviceOption(ExternalIdentity)
       // 历史会话查询诊断日志：记录谁在查、请求参数、过滤是否生效、返回多少条。
-      // 用于排查多用户会话隔离问题（是谁查到了谁的会话）。
+      // 用于排查多用户会话隔离问题（是谁查到了谁的会话）。用 console.log 确保输出。
       const log = (filtered: boolean, returned: number) =>
-        Effect.logInfo("session.list", {
-          directory,
-          identity: identity._tag === "Some" ? identity.value.userId : undefined,
-          tenant: identity._tag === "Some" ? identity.value.tenantId : undefined,
-          filtered,
-          limit: ctx.query.limit,
-          roots: ctx.query.roots ?? false,
-          returned,
-        })
+        Effect.sync(() =>
+          console.log(`[session.list] directory=${directory} identity=${identity._tag === "Some" ? identity.value.userId : "none"} tenant=${identity._tag === "Some" ? identity.value.tenantId : "none"} filtered=${filtered} limit=${ctx.query.limit} roots=${ctx.query.roots ?? false} returned=${returned} knowledgeMode=${isKnowledgeMode()}`),
+        )
       // 知识库模式：严格按用户隔离（SQL 层，LIMIT 之前）。无有效身份（匿名/
       // 失效 token）→ 返回空列表，避免看到任何用户的会话。
       const ident = identity._tag === "Some" ? identity.value : undefined
