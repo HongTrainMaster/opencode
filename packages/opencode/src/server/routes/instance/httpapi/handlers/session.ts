@@ -50,6 +50,9 @@ const tryParseJson = (text: string) =>
  * 按外部知识库用户过滤会话列表：只保留
  * 1. 当前用户创建的会话（metadata.externalUserId/externalTenantId 精确匹配）
  * 2. 无知识库 metadata 的会话（旧数据/非知识库场景），避免隐藏既有历史
+ *
+ * 新代码优先用 Session.list({ externalUser }) 在 SQL 层过滤（LIMIT 之前）；
+ * 该函数保留给仍需要内存兜底的调用方。
  */
 export function filterSessionsByExternalUser<T extends { metadata?: Record<string, unknown> | undefined }>(
   sessions: readonly T[],
@@ -81,7 +84,15 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
 
     const list = Effect.fn("SessionHttpApi.list")(function* (ctx: { query: typeof ListQuery.Type }) {
       const directory = ctx.query.directory ? yield* InstanceState.directory : undefined
-      const sessions = yield* session.list({
+      // 知识库（ExternalIdentity 服务存在且已解析 userId）场景：按用户隔离会话，
+      // 过滤在 SQL 层完成（LIMIT 之前），避免其他用户会话挤掉当前用户历史。
+      // 普通 opencode 场景（服务缺失/无 userId）不过滤，保持原行为。
+      const identity = yield* Effect.serviceOption(ExternalIdentity)
+      const externalUser =
+        identity._tag === "Some" && identity.value.userId
+          ? { userId: identity.value.userId, tenantId: identity.value.tenantId }
+          : undefined
+      return yield* session.list({
         directory: ctx.query.scope === "project" ? undefined : directory,
         scope: ctx.query.scope,
         path: ctx.query.path,
@@ -89,17 +100,8 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
         start: ctx.query.start,
         search: ctx.query.search,
         limit: ctx.query.limit,
+        externalUser,
       })
-      // 知识库（ExternalIdentity 服务存在且已解析 userId）场景：按用户隔离会话。
-      // 普通 opencode 场景（服务缺失/无 userId）不过滤，保持原行为。
-      const identity = yield* Effect.serviceOption(ExternalIdentity)
-      if (identity._tag === "Some") {
-        const { userId, tenantId } = identity.value
-        if (userId) {
-          return filterSessionsByExternalUser(sessions, userId, tenantId)
-        }
-      }
-      return sessions
     })
 
     const status = Effect.fn("SessionHttpApi.status")(function* () {
@@ -181,7 +183,22 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
     })
 
     const create = Effect.fn("SessionHttpApi.create")(function* (ctx: { payload?: Session.CreateInput }) {
-      return yield* shareSvc.create(ctx.payload)
+      // 知识库场景：原生 create 也写入外部身份 metadata，使 session.list 的
+      // externalUser 过滤（SQL 层）能正确隔离历史会话。
+      const identity = yield* Effect.serviceOption(ExternalIdentity)
+      const payload =
+        identity._tag === "Some" && identity.value.userId
+          ? {
+              ...ctx.payload,
+              metadata: {
+                ...(ctx.payload?.metadata ?? {}),
+                externalUserId: identity.value.userId,
+                externalTenantId: identity.value.tenantId,
+                externalNickName: identity.value.nickName,
+              },
+            }
+          : ctx.payload
+      return yield* shareSvc.create(payload)
     })
 
     const createRaw = Effect.fn("SessionHttpApi.createRaw")(function* (ctx: {

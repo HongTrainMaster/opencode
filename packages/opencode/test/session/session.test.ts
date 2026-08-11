@@ -250,4 +250,30 @@ describe("Session", () => {
       expect(saved.metadata).toBeUndefined()
     }),
   )
+
+  it.instance("list filters by externalUser in SQL, before limit is applied", () =>
+    Effect.gen(function* () {
+      const session = yield* SessionNs.Service
+      const meta = (userId: string, tenantId: string) => ({ externalUserId: userId, externalTenantId: tenantId })
+      const cleanup = (info: SessionNs.Info) => session.remove(info.id).pipe(Effect.ignore)
+
+      // 当前用户 + 其他用户 + 无 external 元数据的旧会话
+      yield* Effect.acquireRelease(session.create({ title: "own", metadata: meta("user_1", "tenant_01") }), cleanup)
+      yield* Effect.acquireRelease(session.create({ title: "other", metadata: meta("user_2", "tenant_02") }), cleanup)
+      yield* Effect.acquireRelease(session.create({ title: "legacy" }), cleanup)
+      // 其他用户批量占满 limit 的会话
+      for (let i = 0; i < 10; i++) {
+        yield* Effect.acquireRelease(
+          session.create({ title: `other-${i}`, metadata: meta("user_2", "tenant_02") }),
+          cleanup,
+        )
+      }
+
+      const own = yield* session.list({ externalUser: { userId: "user_1", tenantId: "tenant_01" }, limit: 5 })
+      const titles = own.map((s) => s.title).sort()
+      // 过滤必须在 limit 之前：即使其他用户会话超过 limit，也只返回自己 + legacy
+      expect(titles).toEqual(["legacy", "own"])
+      expect(own.every((s) => s.title !== "other" && !s.title.startsWith("other-"))).toBe(true)
+    }),
+  )
 })

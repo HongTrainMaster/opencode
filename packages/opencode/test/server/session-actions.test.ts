@@ -5,8 +5,12 @@ import { Session as SessionNs } from "@/session/session"
 import { disposeAllInstances, TestInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
 import { httpApiLayer, requestInDirectory } from "./httpapi-layer"
-
-const it = testEffect(Layer.mergeAll(LayerNode.compile(SessionNs.node), httpApiLayer))
+const it = testEffect(
+  Layer.mergeAll(
+    LayerNode.compile(SessionNs.node),
+    httpApiLayer,
+  ),
+)
 
 afterEach(async () => {
   mock.restore()
@@ -85,6 +89,40 @@ describe("session action routes", () => {
 
         expect(res.status).toBe(200)
         expect(yield* res.json).toBe(true)
+      }),
+    { git: true },
+  )
+
+  it.instance(
+    "native create injects external identity metadata for authenticated knowledge users",
+    () =>
+      Effect.gen(function* () {
+        const test = yield* TestInstance
+        // 与业务系统一致的真实 JWT 格式：header.payload.signature，payload 含
+        // userId/userName/tenantId。knowledge-adapter 从 JWT claims 直接解码用户身份。
+        const b64url = (obj: Record<string, unknown>) =>
+          Buffer.from(JSON.stringify(obj)).toString("base64url")
+        const jwt = [
+          b64url({ alg: "HS256", typ: "JWT" }),
+          b64url({ userId: 1001, userName: "Alice", tenantId: "tenant_01" }),
+          "sig",
+        ].join(".")
+
+        const created = yield* requestInDirectory("/session", test.directory, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${jwt}`,
+          },
+          body: JSON.stringify({ title: "kb-session" }),
+        })
+        expect(created.status).toBe(200)
+
+        const session = (yield* created.json) as SessionNs.Info
+        expect(session.metadata?.externalUserId).toBe("1001")
+        expect(session.metadata?.externalTenantId).toBe("tenant_01")
+
+        yield* SessionNs.Service.use((svc) => svc.remove(session.id).pipe(Effect.ignore))
       }),
     { git: true },
   )

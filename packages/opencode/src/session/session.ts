@@ -308,6 +308,11 @@ export type ListInput = {
   start?: number
   search?: string
   limit?: number
+  /**
+   * 知识库按用户隔离：只返回该外部用户创建的会话，加上无外部元数据的旧会话。
+   * 过滤在 SQL 层完成，在 LIMIT 之前生效，避免其他用户会话挤掉当前用户历史。
+   */
+  externalUser?: { userId: string; tenantId: string }
 }
 
 export type GlobalListInput = {
@@ -992,6 +997,22 @@ function listByProject(
   }
   if (input.search) {
     conditions.push(like(SessionTable.title, `%${input.search}%`))
+  }
+  if (input.externalUser) {
+    // 知识库按用户隔离：SQL 层过滤（LIMIT 之前），只保留当前用户创建
+    // 的会话 + 无外部元数据的旧会话。
+    conditions.push(
+      and(
+        or(
+          eq(sql`json_extract(${SessionTable.metadata}, '$.externalUserId')`, input.externalUser.userId),
+          isNull(sql`json_extract(${SessionTable.metadata}, '$.externalUserId')`),
+        ),
+        or(
+          eq(sql`json_extract(${SessionTable.metadata}, '$.externalTenantId')`, input.externalUser.tenantId),
+          isNull(sql`json_extract(${SessionTable.metadata}, '$.externalUserId')`),
+        ),
+      )!,
+    )
   }
 
   const limit = input.limit ?? 100
