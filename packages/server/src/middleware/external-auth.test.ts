@@ -67,6 +67,27 @@ describe("extractBearerToken", () => {
     )
     expect(extractBearerToken(request)).toBe("knowledge-token")
   })
+
+  it("decodes a knowledge-encoded token sent as a Bearer header", () => {
+    // The web UI passes the auth_token base64 value straight into the Bearer
+    // header; the backend must decode the knowledge:<token>: envelope.
+    const request = HttpServerRequestModule.fromWeb(
+      new Request("http://localhost/test", {
+        headers: { Authorization: `Bearer ${encodeBearerToken("encoded-token")}` },
+      }),
+    )
+    expect(extractBearerToken(request)).toBe("encoded-token")
+  })
+
+  it("keeps a raw JWT passed as a Bearer header intact", () => {
+    const jwt = "eyJhbGciOiJIUzI1NiJ9.eyJ1c2VySWQiOjF9.sig"
+    const request = HttpServerRequestModule.fromWeb(
+      new Request("http://localhost/test", {
+        headers: { Authorization: `Bearer ${jwt}` },
+      }),
+    )
+    expect(extractBearerToken(request)).toBe(jwt)
+  })
 })
 
 describe("ExternalAuthMiddleware", () => {
@@ -144,7 +165,7 @@ describe("ExternalAuthMiddleware", () => {
     expect(result).toBe("None")
   })
 
-  it("throws Unauthorized error for invalid token", () => {
+  it("falls back to anonymous when the adapter rejects the token", () => {
     const adapter = makeMockAdapter("valid-token")
     const request = HttpServerRequestModule.fromWeb(
       new Request("http://localhost/test", {
@@ -152,20 +173,59 @@ describe("ExternalAuthMiddleware", () => {
       }),
     )
 
-    expect(() =>
-      Effect.runSync(
-        Effect.gen(function* () {
-          const middleware: any = yield* ExternalAuth
-          const innerEffect = Effect.gen(function* () {
-            return "should not reach here"
-          })
-          return yield* (middleware as any)(innerEffect)
-        }).pipe(
-          Effect.provideService(HttpServerRequestModule.HttpServerRequest as any, request),
-          Effect.provide(externalAuthLayer),
-          Effect.provideService(ExternalIdentityAdapterTag as any, adapter),
-        ),
+    const result = Effect.runSync(
+      Effect.gen(function* () {
+        const middleware: any = yield* ExternalAuth
+        const innerEffect = Effect.gen(function* () {
+          const identity = yield* Effect.serviceOption(ExternalIdentity)
+          return identity._tag
+        })
+        return yield* (middleware as any)(innerEffect)
+      }).pipe(
+        Effect.provideService(HttpServerRequestModule.HttpServerRequest as any, request),
+        Effect.provide(externalAuthLayer),
+        Effect.provideService(ExternalIdentityAdapterTag as any, adapter),
       ),
-    ).toThrow()
+    )
+
+    // No ExternalIdentity is injected; downstream handlers deny in knowledge mode.
+    expect(result).toBe("None")
+  })
+
+  it("propagates an empty identity when the adapter fails closed on an invalid token", () => {
+    const emptyAdapter: ExternalIdentityAdapter = {
+      authenticate: () =>
+        Effect.succeed(
+          ExternalIdentity.Info.make({
+            userId: "",
+            nickName: "",
+            tenantId: "",
+            workspaces: [],
+            permissions: {},
+          }),
+        ),
+    }
+    const request = HttpServerRequestModule.fromWeb(
+      new Request("http://localhost/test", {
+        headers: { Authorization: "Bearer bad-token" },
+      }),
+    )
+
+    const result = Effect.runSync(
+      Effect.gen(function* () {
+        const middleware: any = yield* ExternalAuth
+        const innerEffect = Effect.gen(function* () {
+          const identity = yield* ExternalIdentity
+          return identity.userId
+        })
+        return yield* (middleware as any)(innerEffect)
+      }).pipe(
+        Effect.provideService(HttpServerRequestModule.HttpServerRequest as any, request),
+        Effect.provide(externalAuthLayer),
+        Effect.provideService(ExternalIdentityAdapterTag as any, emptyAdapter),
+      ),
+    )
+
+    expect(result).toBe("")
   })
 })

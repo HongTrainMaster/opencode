@@ -11,44 +11,42 @@ export class ExternalAuth extends HttpApiMiddleware.Service<ExternalAuth>()(
   { error: HttpApiError.UnauthorizedNoContent },
 ) {}
 
+// The web UI sends the business JWT either as a raw Bearer token or in the
+// "auth_token" encoding: base64("knowledge:<token>:"). Extract the raw token
+// from either representation.
+function decodeKnowledgeEncoded(value: string): string | undefined {
+  const decodedResult = Encoding.decodeBase64String(value)
+  if (!Result.isSuccess(decodedResult)) return undefined
+  const decoded = decodedResult.success
+  if (!decoded.startsWith(BEARER_PREFIX)) return undefined
+  const rest = decoded.slice(BEARER_PREFIX.length)
+  const endIdx = rest.indexOf(":")
+  if (endIdx === -1) return undefined
+  return rest.slice(0, endIdx)
+}
+
 // Extract Bearer token from request (URL query param or Authorization header)
 export function extractBearerToken(request: HttpServerRequest.HttpServerRequest): string | undefined {
   const url = new URL(request.url, "http://localhost")
   const queryAuth = url.searchParams.get("Authorization")
-  if (queryAuth?.startsWith("Bearer ")) return queryAuth.slice("Bearer ".length)
+  if (queryAuth?.startsWith("Bearer ")) {
+    const value = queryAuth.slice("Bearer ".length)
+    return decodeKnowledgeEncoded(value) ?? value
+  }
 
   const header = request.headers.authorization
-  if (header?.startsWith("Bearer ")) return header.slice("Bearer ".length)
+  if (header?.startsWith("Bearer ")) {
+    const value = header.slice("Bearer ".length)
+    return decodeKnowledgeEncoded(value) ?? value
+  }
 
   // Also handle auth_token encoded as Basic auth with "knowledge:" prefix
   if (header?.startsWith("Basic ")) {
-    const decodedResult = Encoding.decodeBase64String(header.slice("Basic ".length))
-    if (Result.isSuccess(decodedResult)) {
-      const decoded = decodedResult.success
-      // Format: "knowledge:TOKEN:"
-      if (decoded.startsWith(BEARER_PREFIX)) {
-        const rest = decoded.slice(BEARER_PREFIX.length)
-        const endIdx = rest.indexOf(":")
-        if (endIdx !== -1) {
-          return rest.slice(0, endIdx)
-        }
-      }
-    }
+    return decodeKnowledgeEncoded(header.slice("Basic ".length))
   }
   const authToken = url.searchParams.get("auth_token")
   if (authToken) {
-    const decodedResult = Encoding.decodeBase64String(authToken)
-    if (Result.isSuccess(decodedResult)) {
-      const decoded = decodedResult.success
-      // Format: "knowledge:TOKEN:"
-      if (decoded.startsWith(BEARER_PREFIX)) {
-        const rest = decoded.slice(BEARER_PREFIX.length)
-        const endIdx = rest.indexOf(":")
-        if (endIdx !== -1) {
-          return rest.slice(0, endIdx)
-        }
-      }
-    }
+    return decodeKnowledgeEncoded(authToken)
   }
 
   return undefined

@@ -3,6 +3,7 @@ import { HttpClient, HttpClientRequest } from "effect/unstable/http"
 import type { ExternalIdentityAdapter } from "@opencode-ai/server/auth/external-identity"
 import { ExternalIdentityAdapterTag, ExternalIdentityInfo } from "@opencode-ai/server/auth/external-identity"
 import { ExternalAuthConfig } from "@opencode-ai/server/auth/external-config"
+import { verifyJwt, hasJwtVerificationConfig, type JwtVerifierConfig } from "@opencode-ai/server/auth/jwt-verify"
 
 // -- Types for business system API responses --
 
@@ -31,7 +32,7 @@ interface KnowledgeInfoData {
 }
 
 interface DecodedUserInfo {
-  userId: number
+  userId: string
   userName: string
   tenantId: string
 }
@@ -40,15 +41,6 @@ interface DecodedUserInfo {
 
 const identityCache = new Map<string, { identity: ExternalIdentityInfo; expiresAt: number }>()
 const CACHE_TTL = 5 * 60 * 1000
-
-function cacheKey(token: string): string {
-  let hash = 0
-  for (let i = 0; i < Math.min(token.length, 64); i++) {
-    hash = ((hash << 5) - hash) + token.charCodeAt(i)
-    hash |= 0
-  }
-  return String(hash)
-}
 
 // -- JWT helpers --
 
@@ -66,28 +58,38 @@ function decodeClientIdFromToken(token: string): string | undefined {
   }
 }
 
-// Decode user info from the JWT payload directly — the business system's
-// JWT already carries userId, userName, and tenantId in its claims, so we
-// skip calling the getInfo API (which requires a Sa-Token session the JWT
-// can't satisfy).
-function decodeUserInfoFromToken(token: string): DecodedUserInfo | undefined {
-  try {
-    const parts = token.split(".")
-    if (parts.length !== 3) return undefined
-    let base64 = parts[1]!.replace(/-/g, "+").replace(/_/g, "/")
-    while (base64.length % 4) base64 += "="
-    const payload = JSON.parse(Buffer.from(base64, "base64").toString())
-    if (payload.userId && payload.userName) {
-      return {
-        userId: payload.userId,
-        userName: payload.userName,
-        tenantId: payload.tenantId ?? "000000",
-      }
-    }
-    return undefined
-  } catch {
+/**
+ * Verify the JWT signature and temporal claims, then read the user identity
+ * from the verified payload. Returns `undefined` (fail-closed) when:
+ *   - no verification key is configured (KNOWLEDGE_JWT_SECRET/PUBLIC_KEY/JWKS)
+ *   - the signature does not match / the token is tampered
+ *   - the token is expired or not-yet-valid
+ * The business system's JWT is an HS256 token signed with sa-token's
+ * `jwt-secret-key`; it carries userId/userName/tenantId in its claims.
+ *
+ * Verification key material is read live from process.env so deployments and
+ * tests can configure/override it without rebuilding layers.
+ */
+async function decodeUserInfoFromVerifiedToken(token: string): Promise<DecodedUserInfo | undefined> {
+  const verifierConfig: JwtVerifierConfig = {
+    secret: process.env.KNOWLEDGE_JWT_SECRET,
+    publicKeyPem: process.env.KNOWLEDGE_JWT_PUBLIC_KEY,
+    jwksUrl: process.env.KNOWLEDGE_JWT_JWKS_URL,
+  }
+  if (!hasJwtVerificationConfig(verifierConfig)) {
     return undefined
   }
+  const verified = await verifyJwt(token, verifierConfig)
+  if (!verified) return undefined
+  const payload = verified.payload
+  if (payload.userId && payload.userName) {
+    return {
+      userId: String(payload.userId),
+      userName: String(payload.userName),
+      tenantId: String(payload.tenantId ?? "000000"),
+    }
+  }
+  return undefined
 }
 
 // -- API calls --
@@ -106,7 +108,6 @@ function callGetKnowledge(
 
     const apiUrl = `${baseUrl.trim()}/system/user/getKnowledge`
     console.log("[knowledge-adapter] 调业务API:", apiUrl)
-    console.log("[knowledge-adapter] token前20字符:", token.substring(0, 20) + "...")
 
     const response =
       yield *
@@ -149,19 +150,22 @@ export const KnowledgeAdapterLayer = Layer.effect(
 
     const authenticate: ExternalIdentityAdapter["authenticate"] = (token, clientId?) =>
       Effect.gen(function* () {
-        // Check cache
-        const key = cacheKey(token)
+        // Check cache (keyed by the full token; the token is the proof of
+        // identity, so the raw string is the correct cache key).
+        const key = token
         const cached = identityCache.get(key)
         if (cached && cached.expiresAt > Date.now()) {
           return cached.identity
         }
 
-        // Decode user info from JWT payload directly (no backend API call)
-        const decoded = decodeUserInfoFromToken(token)
+        // Verify signature + exp/nbf first. Unverifiable tokens never yield a
+        // real identity (fail-closed).
+        const decoded = yield* Effect.promise(() => decodeUserInfoFromVerifiedToken(token))
         if (!decoded) {
-          yield* Effect.logWarning("knowledge adapter: JWT missing userId/userName claims, empty identity", {
-            clientId,
-          })
+          yield* Effect.logWarning(
+            "knowledge adapter: JWT verification failed (no key configured, tampered, or expired) — using empty identity (fail-closed)",
+            { clientId },
+          )
           return ExternalIdentityInfo.make({
             userId: "",
             nickName: "",
@@ -170,13 +174,13 @@ export const KnowledgeAdapterLayer = Layer.effect(
             permissions: {},
           })
         }
-        yield* Effect.logInfo("knowledge adapter: JWT decoded", {
-          userId: String(decoded.userId),
+        yield* Effect.logInfo("knowledge adapter: JWT verified", {
+          userId: decoded.userId,
           userName: decoded.userName,
           tenantId: decoded.tenantId,
         })
 
-        // Try fetching workspaces from business system; callGetKnowledge already
+        // Fetch workspaces from business system; callGetKnowledge already
         // handles all errors internally (Effect.option → empty on failure).
         const resolvedClientId = clientId ?? decodeClientIdFromToken(token)
         const knowledgeInfo = yield* callGetKnowledge(
@@ -184,7 +188,7 @@ export const KnowledgeAdapterLayer = Layer.effect(
         )
 
         const identity = ExternalIdentityInfo.make({
-          userId: String(decoded.userId),
+          userId: decoded.userId,
           nickName: decoded.userName,
           tenantId: decoded.tenantId,
           workspaces: (knowledgeInfo.workspaces ?? []).map((w) => ({
