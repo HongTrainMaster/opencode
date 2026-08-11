@@ -44,8 +44,8 @@ export class WikiSessionService extends Context.Service<WikiSessionService, Wiki
 }
 
 const WIKI_MODEL = {
-  providerID: ProviderV2.ID.make("hsl"),
-  modelID: ModelV2.ID.make("nvidia/Qwen3.6-35B-A3B-NVFP4"),
+  providerID: ProviderV2.ID.make(process.env.WIKI_LLM_PROVIDER ?? "bjj"),
+  modelID: ModelV2.ID.make(process.env.WIKI_LLM_MODEL ?? "nvidia/Qwen3.6-35B-A3B-NVFP4"),
 } as const
 
 // Mirror the CLI's non-interactive ruleset: deny question/plan so the headless
