@@ -1,11 +1,14 @@
 # opencode-server 发布包 —— 现场部署操作手册（给 opencode 代理）
 
-**版本**: 2026-08-11 发布
-**代码**: dev 分支，commit `80129478cc`（含 OCR 兜底 + 可配置 wiki 模型 + bjj 供应商 + **知识库历史会话按用户隔离**）
+**版本**: 2026-08-12 发布
+**代码**: dev 分支，commit `a292e1693c`（OCR 兜底 + 可配置 wiki 模型 + bjj 供应商 + 知识库历史会话
+按用户严格隔离 + JWT 签名校验 fail-closed + 19 位 user_id 精度修复）
 **包**: `opencode-release.tar.gz`（61M）
 
-> ⚠️ **必须用 `80129478cc` 之后的新包**：`47613a8225` 及更早的二进制**没有**会话按用户隔离功能，
-> 会出现不同用户的历史会话串在一起（一个用户看到别人的问答记录）。请重新打包再部署。
+> ⚠️ **必须用 `a292e1693c` 之后的新包**（`a292e1693c` 已于 2026-08-12 部署并验证）。更早的二进制有不同问题：
+> - `47613a8225` 及更早：**没有**会话按用户隔离功能，不同用户历史会话串在一起（一个用户看到别人的问答记录）。
+> - `80129478cc`～`d6004d3765`：有隔离但无 `KNOWLEDGE_SESSION_ISOLATION` 显式开关、无 JWT 签名校验（未验签可伪造身份）。
+> - `4ae34c7a51` 之前：JWT fail-closed 但无 loginId 精度修复（19 位 user_id 被 JS `JSON.parse` 四舍五入，隔离对不上，见 §3.2.1）。
 
 ---
 
@@ -72,6 +75,9 @@ install -m 644 /tmp/release/systemd/opencode-server.service /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable --now opencode-server
 ```
+> ⚠️ **systemd 单元内必须包含**：`KNOWLEDGE_SESSION_ISOLATION=true`、`KNOWLEDGE_JWT_SECRET=<sa-token
+> jwt-secret-key>`（取业务系统 `application.yml` 的 `sa-token.jwt-secret-key`）、`WIKI_LLM_PROVIDER`/`WIKI_LLM_MODEL`。
+> 缺失 `KNOWLEDGE_JWT_SECRET` 会导致所有 JWT fail-closed、会话列表为空（详见 §3.2.1 / §五 故障排查）。
 
 ### 步骤 4：nginx 前端（若新环境）
 ```bash
@@ -131,6 +137,11 @@ iframe URL 的 `Authorization`/`auth_token` 参数会自动透传）。服务端
 > claims**。未配置 `KNOWLEDGE_JWT_SECRET` 时所有 JWT 认证会 fail-closed（身份为空 → 会话列表返回空），
 > 而不是放行。若 `KNOWLEDGE_API_BASE_URL` 已设置但未开隔离，服务启动日志会输出醒目 WARN 提醒。
 
+> ⚠️ **user_id 精度**：业务系统 `sys_user.id` 是 19 位雪花 ID（> 2^53），JWT payload 里以 JSON number
+> 表示会被 JS `JSON.parse` 四舍五入（如 `1966044826377150466` → `1966044826377150500`）。服务端**优先从
+> sa-token 的 `loginId` claim**（`"sys_user:1966044826377150466"`，字符串，无精度损失）提取精确 userId，
+> 仅当无 `loginId` 时回退 `payload.userId`。因此必须用 `a292e1693c` 之后的二进制，19 位用户的会话隔离才正确。
+
 **隔离语义：**
 
 - **列表**：`session.list` 在 SQL 层按 `externalUserId`/`externalTenantId` 严格过滤（LIMIT 之前），
@@ -141,7 +152,11 @@ iframe URL 的 `Authorization`/`auth_token` 参数会自动透传）。服务端
   所有按会话 ID 的接口都校验属主——匿名或非属主一律 401，用户无法凭 ID 读取/篡改他人会话。
 - **其他入口**：`/experimental/session`（listGlobal）、`/serve/api/knowledge/session/list` 同样按用户过滤。
 
-**部署前提**：必须使用 `80129478cc` 之后的二进制（`47613a8225` 及更早没有该功能，会话会串线）。
+**会话归属 = 创建时登录的账号**：会话的 `externalUserId` 由创建时 JWT 解析出的身份写入。若同一批会话在
+不同账号（如 `admin` 与 `bjjadmin`）之间建过，则旧账号建的会话对新账号**不可见**（打开时属主校验 401）——
+这是隔离的预期行为，不是 bug。解决：用属主账号登录，或将会话归属迁移到当前账号（见 §六 数据迁移）。
+
+**部署前提**：必须使用 `a292e1693c` 之后的二进制（更早版本的问题见文首版本说明）。
 
 ### 3.3 OCR 兜底（doc-parser）
 内置解析（txt/md/pdf文本层/docx）拿不到文本时自动调 tesseract OCR：
@@ -188,6 +203,13 @@ curl -H "Authorization: Bearer <jwt2>" "http://localhost:4096/session?directory=
 # 5.3 匿名请求看不到任何会话（隔离必须 deny-by-default）
 curl "http://localhost:4096/session?directory=<dir>&limit=50&roots=true" | jq 'length'   # 期望: 0
 
+# 5.4 会话级属主校验 + 19 位 user_id 精度
+#   <owner-jwt> = 属主账号 JWT（含精确 loginId）；<other-jwt> = 另一账号 JWT；<sessionID> = 属主建的会话
+curl -o /dev/null -w "%{http_code}" -H "Authorization: Bearer <owner-jwt>" "http://localhost:4096/session/<sessionID>"   # 期望: 200
+curl -o /dev/null -w "%{http_code}" -H "Authorization: Bearer <other-jwt>" "http://localhost:4096/session/<sessionID>"   # 期望: 401
+#   若属主是 19 位用户，服务端日志应看到精确 id（...466）而非四舍五入（...500）：
+journalctl -u opencode-server --since '1 min ago' | grep 'JWT verified userId='   # 期望: 精确 id
+
 # 6. 前端
 curl -s -o /dev/null -w "%{http_code}" http://<host>/opencode/   # 期望: 200
 ```
@@ -202,9 +224,11 @@ curl -s -o /dev/null -w "%{http_code}" http://<host>/opencode/   # 期望: 200
 | 入库会话报模型不存在 | WIKI_LLM_PROVIDER/MODEL 与配置不符 | 检查 systemd Environment + bjj 供应商模型定义 |
 | 业务 API 404 | KNOWLEDGE_API_BASE_URL 指向错误 | 修改 Environment 后重启 |
 | 前端 404 | SPA 未部署到 nginx html | 重新 `cp -r /tmp/release/spa/. <nginx html>/opencode/` |
-| 历史会话串线（A 用户看到 B 用户的会话） | 二进制是 `47613a8225` 或更早（无按用户隔离） | 用 `80129478cc` 之后的新包重新部署并重启 |
+| 历史会话串线（A 用户看到 B 用户的会话） | 二进制是 `47613a8225` 或更早（无按用户隔离） | 用 `a292e1693c` 之后的新包重新部署并重启 |
 | 会话列表为空/历史不见了 | 隔离已开启但未配置 `KNOWLEDGE_JWT_SECRET`，JWT 校验 fail-closed（身份为空） | 配置 `KNOWLEDGE_JWT_SECRET=<jwt-secret-key>` 后重启 |
 | 匿名/不带 token 能看全部会话 | 未开启隔离（缺 `KNOWLEDGE_SESSION_ISOLATION=true`），启动日志有 WARN | 补配 `KNOWLEDGE_SESSION_ISOLATION=true` 后重启 |
+| 打开历史会话报 401（前端 GET /session/{id} → 401） | 会话归属账号 ≠ 当前登录账号（属主校验隔离，见 §3.2.1） | 用属主账号登录；或将会话 `externalUserId` 迁移到当前账号（见 §6.1） |
+| 身份解析成错误 userId（日志 `...500` 而非 `...466`） | 二进制无 loginId 精度修复（< `a292e1693c`） | 用 `a292e1693c` 之后的新包重新部署并重启 |
 | 改配置不生效 | 未重启服务 | 配置进程启动时加载，必须 `systemctl restart` |
 
 ---
@@ -212,3 +236,32 @@ curl -s -o /dev/null -w "%{http_code}" http://<host>/opencode/   # 期望: 200
 ## 六、知识库数据（可选迁移）
 知识库内容目录 `/home/bjglj/llm-wiki-skill/aistore`（wiki/sources 等，含已补写的 documentId）
 **不在本包内**。若需迁移历史知识库数据，请单独索要该目录的打包文件。
+
+### 6.1 会话归属迁移（跨账号会话不可见时）
+会话归属存在 SQLite `~/.local/share/opencode/opencode-local.db` 的 `session.metadata`（JSON）的
+`externalUserId`/`externalNickName` 字段。当同一批会话需要从旧账号迁移到当前账号时：
+
+```python
+import sqlite3, json, time
+DB = '/home/bjglj/.local/share/opencode/opencode-local.db'
+src = sqlite3.connect(DB)
+# 1) 先做一致性备份
+dst = sqlite3.connect(f'/home/bjglj/backups/opencode-local-{int(time.time())}.db')
+src.backup(dst); dst.close()
+NEW_ID, NEW_NAME = "1966044826377150466", "bjjadmin"   # 当前账号
+n = 0
+for sid, d, meta in src.execute("SELECT id, directory, metadata FROM session").fetchall():
+    if 'llm-wiki' not in (d or ''):            # 只迁移知识库目录
+        continue
+    m = json.loads(meta)
+    if m.get('externalUserId') == '1':         # 旧账号
+        m['externalUserId'] = NEW_ID
+        m['externalNickName'] = NEW_NAME
+        src.execute("UPDATE session SET metadata=? WHERE id=?", (json.dumps(m, ensure_ascii=False), sid))
+        n += 1
+src.commit(); print('migrated', n)
+```
+- SQLite 实时读取，迁移后**无需重启**，前端刷新页面即生效。
+- 迁移后旧账号对这些会话不可见（属主校验 401），符合隔离预期。
+- 已于 2026-08-12 用此法把知识库目录 152 条会话从 `externalUserId="1"`（admin）迁移到
+  `1966044826377150466`（bjjadmin），备份 `/home/bjglj/backups/opencode-local-1786493237.db`。
