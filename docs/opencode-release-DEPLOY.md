@@ -1,14 +1,18 @@
 # opencode-server 发布包 —— 现场部署操作手册（给 opencode 代理）
 
 **版本**: 2026-08-12 发布
-**代码**: dev 分支，commit `a292e1693c`（OCR 兜底 + 可配置 wiki 模型 + bjj 供应商 + 知识库历史会话
-按用户严格隔离 + JWT 签名校验 fail-closed + 19 位 user_id 精度修复）
+**代码**: dev 分支，commit `1fe3a5dec8`（OCR 兜底 + 可配置 wiki 模型 + bjj 供应商 + 知识库历史会话
+按用户严格隔离 + JWT 签名校验 fail-closed + 19 位 user_id 精度修复 + 前端 Bearer 归一化 +
+知识库首页历史会话列表）
 **包**: `opencode-release.tar.gz`（61M）
 
-> ⚠️ **必须用 `a292e1693c` 之后的新包**（`a292e1693c` 已于 2026-08-12 部署并验证）。更早的二进制有不同问题：
+> ⚠️ **必须用 `a292e1693c` 之后的新包**（`1fe3a5dec8` 已于 2026-08-12 部署并验证）。更早的二进制有不同问题：
 > - `47613a8225` 及更早：**没有**会话按用户隔离功能，不同用户历史会话串在一起（一个用户看到别人的问答记录）。
 > - `80129478cc`～`d6004d3765`：有隔离但无 `KNOWLEDGE_SESSION_ISOLATION` 显式开关、无 JWT 签名校验（未验签可伪造身份）。
 > - `4ae34c7a51` 之前：JWT fail-closed 但无 loginId 精度修复（19 位 user_id 被 JS `JSON.parse` 四舍五入，隔离对不上，见 §3.2.1）。
+> - `61d70e4cd3` 之后：前端增加知识库 JWT 跨路由持久化 + **Bearer 双重前缀归一化**（业务系统 URL 传的
+>   Authorization 已带 "Bearer " 前缀，SDK 不再拼出 "Bearer Bearer ..."），并修复了知识库首页
+>   历史会话列表（右侧面板）与滚动条布局。
 
 ---
 
@@ -157,6 +161,16 @@ iframe URL 的 `Authorization`/`auth_token` 参数会自动透传）。服务端
 这是隔离的预期行为，不是 bug。解决：用属主账号登录，或将会话归属迁移到当前账号（见 §六 数据迁移）。
 
 **部署前提**：必须使用 `a292e1693c` 之后的二进制（更早版本的问题见文首版本说明）。
+
+### 3.2.2 前端 JWT 传递（Bearer 归一化 + 跨路由持久化）
+
+知识库 iframe 打开 opencode 前端时，业务系统把 JWT 放在 URL 参数（`Authorization` 或 `auth_token`，
+可能已带 `Bearer ` 前缀）。前端 SDK（`createSdkForServer`/`createApiForServer`）会把该值附加为
+`Authorization: Bearer <jwt>` 请求头。**若 URL 值已带 "Bearer " 前缀，会归一化去重**，避免发送
+`Bearer Bearer ...` 导致 401。同时 JWT 在应用启动时持久化到 `sessionStorage`（`opencode_knowledge_token`），
+保证从知识库首页进入会话页等跨路由请求都携带身份。
+
+> 若出现「前端已发送单个 Bearer 但仍 401」，多半是浏览器缓存了旧版 JS，硬刷新（Ctrl+Shift+R）即可。
 
 ### 3.3 OCR 兜底（doc-parser）
 内置解析（txt/md/pdf文本层/docx）拿不到文本时自动调 tesseract OCR：

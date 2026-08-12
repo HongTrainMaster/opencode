@@ -106,6 +106,7 @@ export const externalAuthLayer = Layer.effect(
           tenantId: info.tenantId || "",
           workspaceCount: (info.workspaces ?? []).length,
         })
+        console.log(`[external-auth] RESOLVED userId=${info.userId} for ${path} -> injecting ExternalIdentity`)
 
         return yield* effect.pipe(
           Effect.provideService(ExternalIdentity, ExternalIdentity.of(info)),
