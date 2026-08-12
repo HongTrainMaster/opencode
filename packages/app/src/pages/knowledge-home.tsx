@@ -134,7 +134,7 @@ export function KnowledgeHome() {
     <div class="knowledge-home">
       <style>{`
         .knowledge-home { display: flex; height: 100vh; font-family: system-ui, sans-serif; }
-        .knowledge-sidebar { width: 200px; background: #f5f5f5; border-right: 1px solid #e0e0e0; padding: 16px; overflow-y: auto; flex-shrink: 0; }
+        .knowledge-sidebar { width: 200px; background: #f5f5f5; border-right: 1px solid #e0e0e0; padding: 16px; overflow-y: auto; flex-shrink: 0; min-height: 0; }
         .knowledge-sidebar h2 { font-size: 14px; font-weight: 600; margin: 0 0 12px; color: #333; }
         .knowledge-workspace { display: block; width: 100%; text-align: left; padding: 10px 12px; margin-bottom: 4px; border: none; border-radius: 6px; background: transparent; cursor: pointer; font-size: 13px; transition: background 0.15s; }
         .knowledge-workspace:hover { background: #e8e8e8; }
@@ -145,9 +145,9 @@ export function KnowledgeHome() {
         .knowledge-start-btn { display: inline-flex; align-items: center; gap: 8px; padding: 14px 32px; background: #4a6cf7; color: #fff; border: none; border-radius: 10px; font-size: 16px; cursor: pointer; transition: background 0.15s; }
         .knowledge-start-btn:hover { background: #3b5de7; }
         .knowledge-start-btn:disabled { opacity: 0.5; cursor: default; }
-        .knowledge-history { width: 280px; border-left: 1px solid #e0e0e0; background: #fafafa; display: flex; flex-direction: column; flex-shrink: 0; }
-        .knowledge-history h2 { font-size: 14px; font-weight: 600; margin: 0; padding: 16px 16px 8px; color: #333; }
-        .knowledge-history-list { flex: 1; overflow-y: auto; padding: 4px 8px 16px; }
+        .knowledge-history { width: 280px; border-left: 1px solid #e0e0e0; background: #fafafa; display: flex; flex-direction: column; flex-shrink: 0; min-height: 0; }
+        .knowledge-history h2 { font-size: 14px; font-weight: 600; margin: 0; padding: 16px 16px 8px; color: #333; flex-shrink: 0; }
+        .knowledge-history-list { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 8px 16px; }
         .knowledge-history-item { display: block; width: 100%; text-align: left; padding: 10px 12px; border: none; border-radius: 6px; background: transparent; cursor: pointer; font-size: 13px; margin-bottom: 2px; transition: background 0.15s; }
         .knowledge-history-item:hover { background: #ececff; }
         .knowledge-history-title { color: #333; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
