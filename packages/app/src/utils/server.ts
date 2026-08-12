@@ -68,14 +68,24 @@ export function createApiForServer(input: {
 
 /**
  * 知识库嵌入场景（iframe）：从当前 URL query 读取业务系统 JWT。
- * 支持 `Authorization` 与 `auth_token` 两个参数，返回 `Authorization: Bearer <jwt>`。
+ * 支持 `Authorization` 与 `auth_token` 两个参数，URL 缺失时回退到
+ * sessionStorage 中持久化的 token（entry.tsx 进入时写入），保证跨路由
+ * （会话页、SDK 请求）都携带身份。返回 `Authorization: Bearer <jwt>`。
+ * token 可能已带 "Bearer " 前缀（业务系统 URL 传的是完整 Authorization 值），
+ * 这里归一化避免出现 "Bearer Bearer ..."。
  */
 function knowledgeAuthHeader(): Record<string, string> | undefined {
   if (typeof location === "undefined") return undefined
   const params = new URLSearchParams(location.search)
-  const token = params.get("Authorization") ?? params.get("auth_token")
+  const token =
+    params.get("Authorization") ??
+    params.get("auth_token") ??
+    (typeof sessionStorage !== "undefined"
+      ? sessionStorage.getItem("opencode_knowledge_token")
+      : undefined)
   if (!token) return undefined
-  return { Authorization: `Bearer ${token}` }
+  const normalized = token.startsWith("Bearer ") ? token.slice("Bearer ".length) : token
+  return { Authorization: `Bearer ${normalized}` }
 }
 
 export type ServerApi = OpenCodeClient

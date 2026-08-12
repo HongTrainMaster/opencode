@@ -151,6 +151,20 @@ if (import.meta.env.VITE_SENTRY_DSN) {
 }
 
 if (root instanceof HTMLElement) {
+  // 知识库 iframe：把 URL 携带的业务 JWT 持久化到 sessionStorage，供 SDK 请求
+  // 跨路由携带（knowledgeAuthHeader 在 URL 缺失时回退读取）。
+  const kbParams = new URLSearchParams(location.search)
+  const kbTokenRaw =
+    kbParams.get("Authorization") ??
+    kbParams.get("auth_token") ??
+    (typeof sessionStorage !== "undefined"
+      ? sessionStorage.getItem("opencode_knowledge_token")
+      : undefined)
+  if (kbTokenRaw) {
+    // 归一化：去掉可能已带的 "Bearer " 前缀，避免 SDK 拼出 "Bearer Bearer ..."。
+    const kbToken = kbTokenRaw.startsWith("Bearer ") ? kbTokenRaw.slice("Bearer ".length) : kbTokenRaw
+    sessionStorage.setItem("opencode_knowledge_token", kbToken)
+  }
   const auth = authFromToken(new URLSearchParams(location.search).get("auth_token"))
   clearAuthToken()
   const server: ServerConnection.Http = {
