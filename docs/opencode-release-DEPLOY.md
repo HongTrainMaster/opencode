@@ -94,31 +94,34 @@ systemctl enable --now opencode-server
 ## 三、配置说明
 
 ### 3.1 知识入库模型（可配置，无需改代码）
-`conf/opencode.jsonc` 中 **bjj 供应商** 提供入库 LLM：
+`conf/opencode.jsonc` 中 **bjj 供应商** 提供入库 LLM（客户环境，指向移动云 DeepSeek）：
 ```jsonc
 "provider": {
   "bjj": {
     "name": "bjj",
     "npm": "@ai-sdk/openai-compatible",
-    "options": { "baseURL": "http://192.168.0.101:8000/v1" },
+    "options": {
+      "baseURL": "https://zhenze-huhehaote.cmecloud.cn/v1",   // 移动云 API
+      "apiKey": "<移动云 API key>"
+    },
     "models": {
-      "nvidia/Qwen3.6-35B-A3B-NVFP4": {
-        "name": "Qwen3.6-35B-A3B-NVFP4",
-        "limit": { "context": 131072, "output": 8000 },
-        "options": { "max_tokens": 8000 }
-      }
+      "deepseek-v4-flash": { "name": "deepseek-v4-flash" }
     }
   }
 }
 ```
+> ⚠️ **客户环境 `bjj` provider 指向移动云 DeepSeek**（baseURL + apiKey 与移动云一致），
+> 与开发服务器（192.168.0.101 的 `bjj` = 本地 vLLM Qwen3.6）**不同**。打包时已按客户环境生成，
+> 请勿用开发服务器的 conf 覆盖。
+
 **知识入库会话使用的模型由环境变量控制**（systemd 单元里已配好默认值）：
 | 环境变量 | 默认值 | 说明 |
 |---|---|---|
-| `WIKI_LLM_PROVIDER` | `bjj` | 入库会话的 provider ID |
-| `WIKI_LLM_MODEL` | `nvidia/Qwen3.6-35B-A3B-NVFP4` | 入库会话的模型 ID |
+| `WIKI_LLM_PROVIDER` | `bjj` | 入库会话的 provider ID（客户环境指向移动云） |
+| `WIKI_LLM_MODEL` | `deepseek-v4-flash` | 入库会话的模型 ID |
 
 如需切换模型，修改 `/etc/systemd/system/opencode-server.service` 里的
-`Environment=WIKI_LLM_MODEL=...`，然后 `systemctl daemon-reload && systemctl restart opencode-server`。
+`Environment=WIKI_LLM_MODEL=...`（及 `WIKI_LLM_PROVIDER`），然后 `systemctl daemon-reload && systemctl restart opencode-server`。
 > 改配置后**必须重启服务**才生效（配置为进程启动时加载）。
 
 ### 3.2 业务后端对接
