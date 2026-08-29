@@ -1,10 +1,20 @@
 # opencode-server 发布包 —— 现场部署操作手册（给 opencode 代理）
 
-**版本**: 2026-08-12 发布
-**代码**: dev 分支，commit `1fe3a5dec8`（OCR 兜底 + 可配置 wiki 模型 + bjj 供应商 + 知识库历史会话
-按用户严格隔离 + JWT 签名校验 fail-closed + 19 位 user_id 精度修复 + 前端 Bearer 归一化 +
-知识库首页历史会话列表）
-**包**: `opencode-release.tar.gz`（61M）
+**版本**: 2026-08-29 发布
+**代码**: dev 分支，commit `40ea1941d7`（Word 附件支持 + HTTP iframe 附件修复 + PPT 模型可配置）
+**包**: `opencode-release-2026-08-29.tar.gz`（61M）
+
+> ⚠️ **本次更新（2026-08-29）**：
+> - **Word 附件**：会话窗口 + 号可选择 .docx 文件作为附件，前端选择器接受 docx（MIME + 后缀），
+>   后端把 docx 附件解压提取文本（word/document.xml）作为合成消息送入会话，模型无需支持二进制。
+> - **HTTP iframe 附件修复**：知识库门户（RuoYi 等）用 iframe 在 `http://` 下加载前端时
+>   `crypto.subtle` 不可用（非 secure context），旧版会导致图片/PDF/docx/文本**全部无法附加**。
+>   新包对 blob id 生成做了降级（随机 id），附件正常附加。
+> - **docx MIME 后缀兜底**：浏览器把 .docx 识别为 `application/zip` 时，按文件后缀判定 docx，
+>   不再拒绝。
+> - **PPT 生成模型可配置**：PPT 接口可指定模型（`providerId/modelId`，如 `bjj/deepseek-v4-flash`），
+>   未指定时回退默认模型。
+> - 其余功能（会话按用户隔离、JWT 验签、19 位 user_id 精度、OCR 兜底、Bearer 归一化等）不变。
 
 > ⚠️ **必须用 `a292e1693c` 之后的新包**（`1fe3a5dec8` 已于 2026-08-12 部署并验证）。更早的二进制有不同问题：
 > - `47613a8225` 及更早：**没有**会话按用户隔离功能，不同用户历史会话串在一起（一个用户看到别人的问答记录）。
