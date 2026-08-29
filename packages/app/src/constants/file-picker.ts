@@ -1,8 +1,11 @@
 export const ACCEPTED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"]
 
+export const WORD_DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
 export const ACCEPTED_FILE_TYPES = [
   ...ACCEPTED_IMAGE_TYPES,
   "application/pdf",
+  WORD_DOCX_MIME,
   "text/*",
   "application/json",
   "application/ld+json",
@@ -19,6 +22,7 @@ export const ACCEPTED_FILE_TYPES = [
   ".css",
   ".csv",
   ".cts",
+  ".docx",
   ".env",
   ".go",
   ".gql",
@@ -61,6 +65,7 @@ const MIME_EXT = new Map([
   ["image/gif", "gif"],
   ["image/webp", "webp"],
   ["application/pdf", "pdf"],
+  [WORD_DOCX_MIME, "docx"],
   ["application/json", "json"],
   ["application/ld+json", "jsonld"],
   ["application/toml", "toml"],

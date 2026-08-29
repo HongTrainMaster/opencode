@@ -70,6 +70,7 @@ const SUPPORTED_MCP_RESOURCE_ATTACHMENT_MIMES = new Set([
   "image/png",
   "image/webp",
 ])
+const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
 const STRUCTURED_OUTPUT_DESCRIPTION = `Use this tool to return your final response in the requested structured format.
 
@@ -91,6 +92,13 @@ function formatMcpResourceBytes(value: number) {
   if (value < 1024) return `${value} B`
   if (value < 1024 * 1024) return `${Math.ceil(value / 1024)} KB`
   return `${Math.ceil(value / (1024 * 1024))} MB`
+}
+
+// Word files are ZIP containers no provider can consume directly, so the attachment is replaced
+// with extracted text; undefined means extraction failed (corrupt file, not a real docx, ...).
+async function extractDocxAttachment(bytes: Uint8Array): Promise<string | undefined> {
+  const { extractDocxText } = await import("../knowledge/doc-parser")
+  return (await extractDocxText(bytes).catch(() => undefined)) || undefined
 }
 
 function isOrphanedInterruptedTool(part: SessionV1.ToolPart) {
@@ -785,6 +793,44 @@ const layer = Layer.effect(
           const url = new URL(part.url)
           switch (url.protocol) {
             case "data:":
+              if (part.mime === DOCX_MIME) {
+                const payload = part.url.slice(part.url.indexOf("base64,") + "base64,".length)
+                const text = yield* Effect.promise(() => extractDocxAttachment(Buffer.from(payload, "base64")))
+                if (!text) {
+                  return [
+                    {
+                      messageID: info.id,
+                      sessionID: input.sessionID,
+                      type: "text",
+                      synthetic: true,
+                      text: `Failed to extract text from Word document ${part.filename}`,
+                    },
+                  ]
+                }
+                return [
+                  {
+                    messageID: info.id,
+                    sessionID: input.sessionID,
+                    type: "text",
+                    synthetic: true,
+                    text: `Called the Read tool with the following input: ${JSON.stringify({ filePath: part.filename })}`,
+                  },
+                  {
+                    messageID: info.id,
+                    sessionID: input.sessionID,
+                    type: "text",
+                    synthetic: true,
+                    text,
+                  },
+                  {
+                    ...part,
+                    mime: "text/plain",
+                    url: `data:text/plain;base64,${Buffer.from(text).toString("base64")}`,
+                    messageID: info.id,
+                    sessionID: input.sessionID,
+                  },
+                ]
+              }
               if (part.mime === "text/plain") {
                 return [
                   {
@@ -943,6 +989,48 @@ const layer = Layer.effect(
                     text: exit.value.output,
                   },
                   { ...part, mime, messageID: info.id, sessionID: input.sessionID },
+                ]
+              }
+
+              if (mime === DOCX_MIME) {
+                const bytes = yield* fsys.readFile(filepath).pipe(Effect.catch(Effect.die))
+                const text = yield* Effect.promise(() => extractDocxAttachment(bytes))
+                if (!text) {
+                  return [
+                    {
+                      messageID: info.id,
+                      sessionID: input.sessionID,
+                      type: "text",
+                      synthetic: true,
+                      text: `Failed to extract text from Word document ${part.filename}`,
+                    },
+                  ]
+                }
+                return [
+                  {
+                    messageID: info.id,
+                    sessionID: input.sessionID,
+                    type: "text",
+                    synthetic: true,
+                    text: `Called the Read tool with the following input: ${JSON.stringify({ filePath: filepath })}`,
+                  },
+                  {
+                    messageID: info.id,
+                    sessionID: input.sessionID,
+                    type: "text",
+                    synthetic: true,
+                    text,
+                  },
+                  {
+                    id: part.id,
+                    messageID: info.id,
+                    sessionID: input.sessionID,
+                    type: "file",
+                    url: `data:text/plain;base64,${Buffer.from(text).toString("base64")}`,
+                    mime: "text/plain",
+                    filename: part.filename!,
+                    source: part.source,
+                  },
                 ]
               }
 

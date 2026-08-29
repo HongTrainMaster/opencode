@@ -421,7 +421,7 @@ export const dict = {
   "prompt.action.stop": "停止",
   "prompt.toast.pasteUnsupported.title": "不支持的附件",
   "prompt.toast.attachmentDuplicate.title": "此文件已上传",
-  "prompt.toast.pasteUnsupported.description": "此处仅能附加图片、PDF 或文本文件。",
+  "prompt.toast.pasteUnsupported.description": "此处仅能附加图片、PDF、Word 文档或文本文件。",
   "prompt.toast.modelAgentRequired.title": "请选择智能体和模型",
   "prompt.toast.modelAgentRequired.description": "发送提示前请先选择智能体和模型。",
   "prompt.toast.worktreeCreateFailed.title": "创建工作区失败",

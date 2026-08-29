@@ -2,12 +2,15 @@ import { onMount } from "solid-js"
 import { makeEventListener } from "@solid-primitives/event-listener"
 import type { PromptInputV2Attachment, PromptInputV2Prompt } from "./types"
 
+const WORD_DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
 const accepted = [
   "image/png",
   "image/jpeg",
   "image/gif",
   "image/webp",
   "application/pdf",
+  WORD_DOCX_MIME,
   "text/*",
   "application/json",
   "application/ld+json",
@@ -24,6 +27,7 @@ const accepted = [
   ".css",
   ".csv",
   ".cts",
+  ".docx",
   ".env",
   ".go",
   ".gql",
@@ -103,7 +107,9 @@ export function createPromptInputV2Attachments(
       if (toast) input.warn()
       return false
     }
-    const blob = input.store ? await input.store(file) : await blobReference(file)
+    const blob = input.store
+      ? await input.store(file).catch(() => blobReference(file))
+      : await blobReference(file)
     const sourcePath = input.getPathForFile?.(file) || undefined
     // Native clipboard images arrive with a fresh timestamped filename on every paste, so identical
     // clipboard content is matched on bytes alone.
@@ -222,9 +228,15 @@ export function createPromptInputV2Attachments(
 const imageMimes = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"])
 
 async function blobReference(file: File) {
-  const id = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", await file.arrayBuffer())))
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("")
+  let id = ""
+  if (globalThis.crypto?.subtle) {
+    id = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", await file.arrayBuffer())))
+      .map((byte) => byte.toString(16).padStart(2, "0"))
+      .join("")
+  } else {
+    // HTTP (non-secure context) iframes have no crypto.subtle; fall back to a random id.
+    id = `blob-${globalThis.crypto?.randomUUID?.() ?? Math.random().toString(16).slice(2)}`
+  }
   return { id, url: URL.createObjectURL(file) }
 }
 const imageExtensions = new Map([
@@ -244,13 +256,16 @@ const textMimes = new Set([
   "application/yaml",
 ])
 
-async function attachmentMime(file: File) {
+export async function attachmentMime(file: File) {
   const type = file.type.split(";", 1)[0]?.trim().toLowerCase() ?? ""
-  if (imageMimes.has(type) || type === "application/pdf") return type
+  if (imageMimes.has(type) || type === "application/pdf" || type === WORD_DOCX_MIME) return type
   const index = file.name.lastIndexOf(".")
   const suffix = index === -1 ? "" : file.name.slice(index + 1).toLowerCase()
-  const fallback = imageExtensions.get(suffix) ?? (suffix === "pdf" ? "application/pdf" : undefined)
-  if ((!type || type === "application/octet-stream") && fallback) return fallback
+  const fallback =
+    imageExtensions.get(suffix) ??
+    (suffix === "pdf" ? "application/pdf" : undefined) ??
+    (suffix === "docx" ? WORD_DOCX_MIME : undefined)
+  if (fallback) return fallback
   if (type.startsWith("text/") || textMimes.has(type) || type.endsWith("+json") || type.endsWith("+xml")) {
     return "text/plain"
   }

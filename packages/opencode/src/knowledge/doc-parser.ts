@@ -83,7 +83,7 @@ function stripXml(xml: string): string {
     .trim()
 }
 
-async function extractDocxText(buf: Uint8Array): Promise<string> {
+export async function extractDocxText(buf: Uint8Array): Promise<string> {
   const blob = new Blob([new Uint8Array(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer)])
   const reader = new ZipReader(new BlobReader(blob))
   try {

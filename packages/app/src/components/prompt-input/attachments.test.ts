@@ -22,6 +22,29 @@ describe("attachmentMime", () => {
     const file = new File([Uint8Array.of(0, 255, 1, 2)], "blob.bin", { type: "application/octet-stream" })
     expect(await attachmentMime(file)).toBeUndefined()
   })
+
+  test("accepts docx by suffix even when the browser reports application/zip", async () => {
+    const file = new File(["PK\x03\x04fake-zip"], "report.docx", { type: "application/zip" })
+    expect(await attachmentMime(file)).toBe(
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    )
+  })
+
+  test("accepts docx by suffix when the browser reports an empty or octet-stream mime", async () => {
+    const empty = new File(["PK\x03\x04fake-zip"], "report.docx", { type: "" })
+    expect(await attachmentMime(empty)).toBe(
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    )
+    const octet = new File(["PK\x03\x04fake-zip"], "report.docx", { type: "application/octet-stream" })
+    expect(await attachmentMime(octet)).toBe(
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    )
+  })
+
+  test("accepts pdf by suffix even when the browser reports application/zip", async () => {
+    const file = new File(["%PDF-1.7"], "guide.pdf", { type: "application/zip" })
+    expect(await attachmentMime(file)).toBe("application/pdf")
+  })
 })
 
 describe("pickAttachmentFiles", () => {
