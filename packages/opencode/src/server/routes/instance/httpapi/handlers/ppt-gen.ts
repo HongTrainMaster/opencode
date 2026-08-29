@@ -39,6 +39,7 @@ export const PptGenHandler = HttpApiBuilder.group(
             const identity = yield* ExternalIdentity
             const taskId: string = ctx.payload?.taskId ?? ""
             const prompt: string = ctx.payload?.prompt ?? ""
+            const model: string = ctx.payload?.model ?? ""
             const style = ctx.payload?.style ?? {}
 
             if (!identity.userId) {
@@ -60,6 +61,7 @@ export const PptGenHandler = HttpApiBuilder.group(
               run: pptGen.gen({
                 taskId,
                 prompt,
+                model: model || undefined,
                 styleFileName: style.fileName,
                 styleContentBase64: style.fileContent,
               }).pipe(

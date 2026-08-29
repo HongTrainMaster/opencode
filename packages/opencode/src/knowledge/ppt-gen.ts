@@ -19,6 +19,8 @@ export interface PptGenServiceShape {
   readonly gen: (args: {
     taskId: string
     prompt: string
+    /** 请求指定的模型（格式 "providerId/modelId"，如 "bjj/deepseek-v4-flash"），为空时用默认模型 */
+    model?: string
     styleFileName: string
     styleContentBase64: string
   }) => Effect.Effect<PptGenRunResult>
@@ -43,10 +45,26 @@ export class PptGenService extends Context.Service<PptGenService, PptGenServiceS
     Layer.succeed(PptGenService, PptGenService.of({ gen }))
 }
 
-const PPT_MODEL = {
+const DEFAULT_PPT_MODEL = {
   providerID: ProviderV2.ID.make("hsl"),
   modelID: ModelV2.ID.make("nvidia/Qwen3.6-35B-A3B-NVFP4"),
 } as const
+
+/**
+ * 解析 PPT 生成模型：请求参数 model 优先（格式 "providerId/modelId"，如 "bjj/deepseek-v4-flash"；
+ * 模型 ID 自身可能含 "/"，故仅取首个 "/" 前段为 provider），未传或格式非法时回退默认模型。
+ */
+function resolvePptModel(requested?: string): { providerID: ProviderV2.ID; modelID: ModelV2.ID } {
+  if (requested) {
+    const sep = requested.indexOf("/")
+    if (sep > 0 && sep < requested.length - 1) {
+      const provider = requested.slice(0, sep)
+      const model = requested.slice(sep + 1)
+      return { providerID: ProviderV2.ID.make(provider), modelID: ModelV2.ID.make(model) }
+    }
+  }
+  return DEFAULT_PPT_MODEL
+}
 
 const HEADLESS_RULESET: PermissionV1.Ruleset = [
   { permission: "question", action: "deny", pattern: "*" },
@@ -125,10 +143,11 @@ function runPptGen(
   store: InstanceStore.Interface,
   session: Session.Interface,
   promptSvc: SessionPrompt.Interface,
-  args: { taskId: string; prompt: string; styleFileName: string; styleContentBase64: string },
+  args: { taskId: string; prompt: string; model?: string; styleFileName: string; styleContentBase64: string },
 ): Effect.Effect<PptGenRunResult> {
   return Effect.gen(function* () {
-    yield* Effect.logInfo("ppt gen start", { taskId: args.taskId, model: PPT_MODEL })
+    const model = resolvePptModel(args.model)
+    yield* Effect.logInfo("ppt gen start", { taskId: args.taskId, model })
 
     // 防御：taskId 参与 workdir 拼路径，先校验字符集，非法直接失败
     yield* Effect.sync(() => assertValidTaskId(args.taskId))
@@ -163,13 +182,13 @@ function runPptGen(
       Effect.gen(function* () {
         const created = yield* session.create({
           title: `ppt-gen: ${args.taskId}`,
-          model: { id: PPT_MODEL.modelID, providerID: PPT_MODEL.providerID },
+          model: { id: model.modelID, providerID: model.providerID },
           permission: HEADLESS_RULESET,
         })
         yield* Effect.logInfo("ppt session created", { sessionID: created.id, taskId: args.taskId })
         return yield* promptSvc.prompt({
           sessionID: created.id,
-          model: PPT_MODEL,
+          model,
           parts: [{ type: "text", text: prompt }],
         })
       }),
