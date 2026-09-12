@@ -185,6 +185,26 @@ iframe URL 的 `Authorization`/`auth_token` 参数会自动透传）。服务端
 
 > 若出现「前端已发送单个 Bearer 但仍 401」，多半是浏览器缓存了旧版 JS，硬刷新（Ctrl+Shift+R）即可。
 
+### 3.2.3 会话模式下的知识入库仅限管理员
+
+**知识库会话里**让 agent 写知识库（llm-wiki 源页/实体页 + 实体关系图）只允许管理员，默认 `userId = 1`：
+
+| 环境变量 | 默认值 | 说明 |
+|---|---|---|
+| `KNOWLEDGE_INGEST_ADMIN_USERIDS` | `1` | 允许会话入库的管理员 userId，逗号分隔可配多个；配成空串 = 没有管理员（全部拒绝，fail-closed） |
+
+- **仅约束会话模式**：非管理员用户的会话会收到系统提示词策略块（`<knowledge_ingest_policy>`），
+  agent **不执行** llm-wiki 的 ingest / batch-ingest / crystallize / delete 工作流，也不写 `raw/`、`wiki/`、
+  `index.md`、`log.md` 等知识库文件，而是明确回复「无权限：知识入库仅限管理员（userId=1）操作」；
+  查询 / 问答 / digest / status / graph / lint 等只读能力不受影响。
+  子代理（task 子会话）会沿父会话继承属主判定，不能用子代理绕过。
+- **接口入库不受限**：业务系统走 `POST /serve/api/ingest` 推送文档不校验该变量，任何账号照常入库
+  （只校验 JWT 身份有效，匿名返回 401）。
+- 服务端**内部无头会话**（wiki / ppt / ingest 管线）没有外部用户身份，同样不受限。
+
+> 说明：会话里没有专门的"入库工具"可拦，因此会话模式是**提示词级**约束——能保证 agent 明确拒绝并提示
+> 无权限，但不是文件系统级硬隔离；需要硬隔离时应改走只读会话/权限规则。
+
 ### 3.3 OCR 兜底（doc-parser）
 内置解析（txt/md/pdf文本层/docx）拿不到文本时自动调 tesseract OCR：
 - 图片（png/jpg/bmp/tiff/webp）→ 直接 tesseract

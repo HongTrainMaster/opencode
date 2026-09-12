@@ -27,6 +27,7 @@ import * as Stream from "effect/Stream"
 import { Command } from "../command"
 import { pathToFileURL, fileURLToPath } from "url"
 import { Config } from "@/config/config"
+import { sessionIngestPolicy } from "../knowledge/ingest-policy"
 import { ConfigMarkdown } from "@/config/markdown"
 import { SessionSummary } from "./summary"
 import { NamedError } from "@opencode-ai/core/util/error"
@@ -99,6 +100,22 @@ function formatMcpResourceBytes(value: number) {
 async function extractDocxAttachment(bytes: Uint8Array): Promise<string | undefined> {
   const { extractDocxText } = await import("../knowledge/doc-parser")
   return (await extractDocxText(bytes).catch(() => undefined)) || undefined
+}
+
+/**
+ * 会话模式（知识库会话）下的知识入库策略：llm-wiki 写库只允许管理员（userId=1），
+ * 其他用户注入"明确拒绝"的系统提示词。判定与文案在 knowledge/ingest-policy.ts。
+ */
+function ingestPolicyFor(
+  sessions: Session.Interface,
+  session: Session.Info,
+): Effect.Effect<string | undefined> {
+  return sessionIngestPolicy(session, (id) =>
+    sessions.get(id).pipe(
+      Effect.option,
+      Effect.map((parent) => (Option.isSome(parent) ? parent.value : undefined)),
+    ),
+  )
 }
 
 function isOrphanedInterruptedTool(part: SessionV1.ToolPart) {
@@ -1172,6 +1189,8 @@ const layer = Layer.effect(
         let structured: unknown
         let step = 0
         const session = yield* sessions.get(sessionID).pipe(Effect.orDie)
+        // 会话身份在整轮循环里不变，入库策略只算一次
+        const ingestPolicy = yield* ingestPolicyFor(sessions, session)
 
         while (true) {
           yield* status.set(sessionID, { type: "busy" })
@@ -1356,6 +1375,8 @@ const layer = Layer.effect(
               ...(mcpInstructions ? [mcpInstructions] : []),
               ...(defaultSkill ? [defaultSkill] : []),
               ...(skills ? [skills] : []),
+              // 放最后：入库权限策略要压过技能/项目指令里的写法
+              ...(ingestPolicy ? [ingestPolicy] : []),
             ]
             const format = lastUser.format ?? { type: "text" as const }
             if (format.type === "json_schema") system.push(STRUCTURED_OUTPUT_SYSTEM_PROMPT)
