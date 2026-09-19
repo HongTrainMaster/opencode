@@ -90,6 +90,40 @@ import type {
   GlobalUpgradeResponses,
   InstanceDisposeErrors,
   InstanceDisposeResponses,
+  KnowledgeGraphEntitiesErrors,
+  KnowledgeGraphEntitiesResponses,
+  KnowledgeGraphEntityErrors,
+  KnowledgeGraphEntityResponses,
+  KnowledgeGraphRelationsErrors,
+  KnowledgeGraphRelationsResponses,
+  KnowledgeGraphWorkspaceErrors,
+  KnowledgeGraphWorkspaceResponses,
+  KnowledgeIngestErrors,
+  KnowledgeIngestJobErrors,
+  KnowledgeIngestJobResponses,
+  KnowledgeIngestJobsErrors,
+  KnowledgeIngestJobsResponses,
+  KnowledgeIngestResponses,
+  KnowledgePptFileErrors,
+  KnowledgePptFileResponses,
+  KnowledgePptGenErrors,
+  KnowledgePptGenResponses,
+  KnowledgePptJobErrors,
+  KnowledgePptJobResponses,
+  KnowledgePptJobsErrors,
+  KnowledgePptJobsResponses,
+  KnowledgePptRenderCoverErrors,
+  KnowledgePptRenderCoverResponses,
+  KnowledgeSessionCreateErrors,
+  KnowledgeSessionCreateResponses,
+  KnowledgeSessionListErrors,
+  KnowledgeSessionListResponses,
+  KnowledgeSummaryListErrors,
+  KnowledgeSummaryListResponses,
+  KnowledgeSummaryWriteErrors,
+  KnowledgeSummaryWriteResponses,
+  KnowledgeWorkspacesErrors,
+  KnowledgeWorkspacesResponses,
   LocationRef,
   LspStatusErrors,
   LspStatusResponses,
@@ -3565,6 +3599,7 @@ export class Session2 extends HeyApiClient {
       metadata?: {
         [key: string]: unknown
       }
+      knowledgeLocalSearch?: boolean
       permission?: PermissionRuleset
       time?: {
         archived?: number
@@ -3582,6 +3617,7 @@ export class Session2 extends HeyApiClient {
             { in: "query", key: "workspace" },
             { in: "body", key: "title" },
             { in: "body", key: "metadata" },
+            { in: "body", key: "knowledgeLocalSearch" },
             { in: "body", key: "permission" },
             { in: "body", key: "time" },
           ],
@@ -7074,6 +7110,506 @@ export class V2 extends HeyApiClient {
   }
 }
 
+export class Session4 extends HeyApiClient {
+  /**
+   * List knowledge sessions
+   */
+  public list<ThrowOnError extends boolean = false>(
+    parameters: {
+      workspaceId: string
+      limit?: string
+      cursor?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "workspaceId" },
+            { in: "query", key: "limit" },
+            { in: "query", key: "cursor" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<
+      KnowledgeSessionListResponses,
+      KnowledgeSessionListErrors,
+      ThrowOnError
+    >({
+      url: "/serve/api/sessions",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Create knowledge session
+   */
+  public create<ThrowOnError extends boolean = false>(
+    parameters?: {
+      agent?: string
+      model?: {
+        id: string
+        providerID: string
+      }
+      workspaceId?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "body", key: "agent" },
+            { in: "body", key: "model" },
+            { in: "body", key: "workspaceId" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<
+      KnowledgeSessionCreateResponses,
+      KnowledgeSessionCreateErrors,
+      ThrowOnError
+    >({
+      url: "/serve/api/sessions",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+}
+
+export class Ingest extends HeyApiClient {
+  /**
+   * Get a single ingest job status
+   */
+  public job<ThrowOnError extends boolean = false>(
+    parameters: {
+      jobId: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "jobId" }] }])
+    return (options?.client ?? this.client).get<KnowledgeIngestJobResponses, KnowledgeIngestJobErrors, ThrowOnError>({
+      url: "/serve/api/ingest/jobs/{jobId}",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Get ingest job statuses by comma-separated ids (in input order)
+   */
+  public jobs<ThrowOnError extends boolean = false>(
+    parameters: {
+      ids: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "query", key: "ids" }] }])
+    return (options?.client ?? this.client).get<KnowledgeIngestJobsResponses, KnowledgeIngestJobsErrors, ThrowOnError>({
+      url: "/serve/api/ingest/jobs",
+      ...options,
+      ...params,
+    })
+  }
+}
+
+export class Graph extends HeyApiClient {
+  /**
+   * List graph entities for a document
+   */
+  public entities<ThrowOnError extends boolean = false>(
+    parameters: {
+      documentId: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "query", key: "documentId" }] }])
+    return (options?.client ?? this.client).get<
+      KnowledgeGraphEntitiesResponses,
+      KnowledgeGraphEntitiesErrors,
+      ThrowOnError
+    >({
+      url: "/serve/api/graph/entities",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * List graph relations for an entity (1 or 2 hops)
+   */
+  public relations<ThrowOnError extends boolean = false>(
+    parameters: {
+      entityId: string
+      hops?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "entityId" },
+            { in: "query", key: "hops" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<
+      KnowledgeGraphRelationsResponses,
+      KnowledgeGraphRelationsErrors,
+      ThrowOnError
+    >({
+      url: "/serve/api/graph/relations",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Get a single graph entity by id
+   */
+  public entity<ThrowOnError extends boolean = false>(
+    parameters: {
+      id: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "id" }] }])
+    return (options?.client ?? this.client).get<
+      KnowledgeGraphEntityResponses,
+      KnowledgeGraphEntityErrors,
+      ThrowOnError
+    >({
+      url: "/serve/api/graph/entity/{id}",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * List all graph entities and relations for a workspace
+   */
+  public workspace<ThrowOnError extends boolean = false>(
+    parameters: {
+      workspaceId: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "query", key: "workspaceId" }] }])
+    return (options?.client ?? this.client).get<
+      KnowledgeGraphWorkspaceResponses,
+      KnowledgeGraphWorkspaceErrors,
+      ThrowOnError
+    >({
+      url: "/serve/api/graph/workspace",
+      ...options,
+      ...params,
+    })
+  }
+}
+
+export class Summary extends HeyApiClient {
+  /**
+   * Read a document's AI summary source file
+   */
+  public list<ThrowOnError extends boolean = false>(
+    parameters: {
+      llmPath: string
+      documentId: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "llmPath" },
+            { in: "query", key: "documentId" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<
+      KnowledgeSummaryListResponses,
+      KnowledgeSummaryListErrors,
+      ThrowOnError
+    >({
+      url: "/serve/api/summary",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Write (create or overwrite) a document's AI summary source file
+   */
+  public write<ThrowOnError extends boolean = false>(
+    parameters?: {
+      llmPath?: string
+      documentId?: string
+      title?: string
+      markdown?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "body", key: "llmPath" },
+            { in: "body", key: "documentId" },
+            { in: "body", key: "title" },
+            { in: "body", key: "markdown" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<
+      KnowledgeSummaryWriteResponses,
+      KnowledgeSummaryWriteErrors,
+      ThrowOnError
+    >({
+      url: "/serve/api/summary",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+}
+
+export class Ppt extends HeyApiClient {
+  /**
+   * Submit a PPT generation task (style layout reuse + prompt)
+   */
+  public gen<ThrowOnError extends boolean = false>(
+    parameters?: {
+      taskId?: string
+      prompt?: string
+      style?: {
+        fileName: string
+        fileContent: string
+      }
+      model?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "body", key: "taskId" },
+            { in: "body", key: "prompt" },
+            { in: "body", key: "style" },
+            { in: "body", key: "model" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<KnowledgePptGenResponses, KnowledgePptGenErrors, ThrowOnError>({
+      url: "/serve/api/ppt/gen",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  /**
+   * Submit a PPT cover render task (first slide → PNG via LibreOffice)
+   */
+  public renderCover<ThrowOnError extends boolean = false>(
+    parameters?: {
+      taskId?: string
+      style?: {
+        fileName: string
+        fileContent: string
+      }
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "body", key: "taskId" },
+            { in: "body", key: "style" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<
+      KnowledgePptRenderCoverResponses,
+      KnowledgePptRenderCoverErrors,
+      ThrowOnError
+    >({
+      url: "/serve/api/ppt/render-cover",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  /**
+   * Get a single PPT generation job status
+   */
+  public job<ThrowOnError extends boolean = false>(
+    parameters: {
+      jobId: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "jobId" }] }])
+    return (options?.client ?? this.client).get<KnowledgePptJobResponses, KnowledgePptJobErrors, ThrowOnError>({
+      url: "/serve/api/ppt/jobs/{jobId}",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Get PPT generation job statuses by comma-separated ids
+   */
+  public jobs<ThrowOnError extends boolean = false>(
+    parameters: {
+      ids: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "query", key: "ids" }] }])
+    return (options?.client ?? this.client).get<KnowledgePptJobsResponses, KnowledgePptJobsErrors, ThrowOnError>({
+      url: "/serve/api/ppt/jobs",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Download the generated .pptx bytes for a job
+   */
+  public file<ThrowOnError extends boolean = false>(
+    parameters: {
+      jobId: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "jobId" }] }])
+    return (options?.client ?? this.client).get<KnowledgePptFileResponses, KnowledgePptFileErrors, ThrowOnError>({
+      url: "/serve/api/ppt/file/{jobId}",
+      ...options,
+      ...params,
+    })
+  }
+}
+
+export class Knowledge extends HeyApiClient {
+  /**
+   * List knowledge workspaces
+   */
+  public workspaces<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).get<KnowledgeWorkspacesResponses, KnowledgeWorkspacesErrors, ThrowOnError>({
+      url: "/serve/api/workspaces",
+      ...options,
+    })
+  }
+
+  /**
+   * Submit documents for asynchronous ingest (CREATE/UPDATE/DELETE)
+   */
+  public ingest<ThrowOnError extends boolean = false>(
+    parameters?: {
+      workspaceId?: string
+      documents?: Array<{
+        documentId: string
+        title: string
+        categoryId?: string
+        llmPath?: string
+        secretLevel?: string
+        format?: string
+        summary?: string
+        keywords?: Array<string>
+        operation: "CREATE" | "UPDATE" | "DELETE"
+        fileContent?: string
+      }>
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "body", key: "workspaceId" },
+            { in: "body", key: "documents" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<KnowledgeIngestResponses, KnowledgeIngestErrors, ThrowOnError>({
+      url: "/serve/api/ingest",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  private _session?: Session4
+  get session(): Session4 {
+    return (this._session ??= new Session4({ client: this.client }))
+  }
+
+  private _ingest?: Ingest
+  get ingest2(): Ingest {
+    return (this._ingest ??= new Ingest({ client: this.client }))
+  }
+
+  private _graph?: Graph
+  get graph(): Graph {
+    return (this._graph ??= new Graph({ client: this.client }))
+  }
+
+  private _summary?: Summary
+  get summary(): Summary {
+    return (this._summary ??= new Summary({ client: this.client }))
+  }
+
+  private _ppt?: Ppt
+  get ppt(): Ppt {
+    return (this._ppt ??= new Ppt({ client: this.client }))
+  }
+}
+
 export class OpencodeClient extends HeyApiClient {
   public static readonly __registry = new HeyApiRegistry<OpencodeClient>()
 
@@ -7215,5 +7751,10 @@ export class OpencodeClient extends HeyApiClient {
   private _v2?: V2
   get v2(): V2 {
     return (this._v2 ??= new V2({ client: this.client }))
+  }
+
+  private _knowledge?: Knowledge
+  get knowledge(): Knowledge {
+    return (this._knowledge ??= new Knowledge({ client: this.client }))
   }
 }

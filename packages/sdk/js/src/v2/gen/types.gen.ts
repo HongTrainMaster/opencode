@@ -1901,6 +1901,7 @@ export type Config = {
   skills?: {
     paths?: Array<string>
     urls?: Array<string>
+    defaultSkill?: string
   }
   references?: {
     [key: string]: string | ConfigV2ReferenceGit | ConfigV2ReferenceLocal
@@ -3927,6 +3928,9 @@ export type SessionV2Info = {
   location: LocationRef
   subpath?: string
   revert?: RevertState
+  metadata?: {
+    [key: string]: unknown
+  }
 }
 
 export type PromptInputFileAttachment = {
@@ -9616,6 +9620,7 @@ export type SessionUpdateData = {
     metadata?: {
       [key: string]: unknown
     }
+    knowledgeLocalSearch?: boolean
     permission?: PermissionRuleset
     time?: {
       archived?: number
@@ -13620,3 +13625,660 @@ export type PtyConnectResponses = {
 }
 
 export type PtyConnectResponse = PtyConnectResponses[keyof PtyConnectResponses]
+
+export type KnowledgeSessionListData = {
+  body?: never
+  path?: never
+  query: {
+    workspaceId: string
+    limit?: string
+    cursor?: string
+  }
+  url: "/serve/api/sessions"
+}
+
+export type KnowledgeSessionListErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type KnowledgeSessionListError = KnowledgeSessionListErrors[keyof KnowledgeSessionListErrors]
+
+export type KnowledgeSessionListResponses = {
+  /**
+   * Success
+   */
+  200: unknown
+}
+
+export type KnowledgeSessionCreateData = {
+  body?: {
+    agent?: string
+    model?: {
+      id: string
+      providerID: string
+    }
+    workspaceId: string
+  }
+  path?: never
+  query?: never
+  url: "/serve/api/sessions"
+}
+
+export type KnowledgeSessionCreateErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type KnowledgeSessionCreateError = KnowledgeSessionCreateErrors[keyof KnowledgeSessionCreateErrors]
+
+export type KnowledgeSessionCreateResponses = {
+  /**
+   * Success
+   */
+  200: unknown
+}
+
+export type KnowledgeWorkspacesData = {
+  body?: never
+  path?: never
+  query?: never
+  url: "/serve/api/workspaces"
+}
+
+export type KnowledgeWorkspacesErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type KnowledgeWorkspacesError = KnowledgeWorkspacesErrors[keyof KnowledgeWorkspacesErrors]
+
+export type KnowledgeWorkspacesResponses = {
+  /**
+   * Success
+   */
+  200: {
+    data: unknown
+  }
+}
+
+export type KnowledgeWorkspacesResponse = KnowledgeWorkspacesResponses[keyof KnowledgeWorkspacesResponses]
+
+export type KnowledgeIngestData = {
+  body?: {
+    workspaceId: string
+    documents: Array<{
+      documentId: string
+      title: string
+      categoryId?: string
+      llmPath?: string
+      secretLevel?: string
+      format?: string
+      summary?: string
+      keywords?: Array<string>
+      operation: "CREATE" | "UPDATE" | "DELETE"
+      fileContent?: string
+    }>
+  }
+  path?: never
+  query?: never
+  url: "/serve/api/ingest"
+}
+
+export type KnowledgeIngestErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type KnowledgeIngestError = KnowledgeIngestErrors[keyof KnowledgeIngestErrors]
+
+export type KnowledgeIngestResponses = {
+  /**
+   * Success
+   */
+  200: {
+    code: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+    data: Array<{
+      documentId: string
+      jobId: string
+      status: "RUNNING"
+    }>
+  }
+}
+
+export type KnowledgeIngestResponse = KnowledgeIngestResponses[keyof KnowledgeIngestResponses]
+
+export type KnowledgeIngestJobData = {
+  body?: never
+  path: {
+    jobId: string
+  }
+  query?: never
+  url: "/serve/api/ingest/jobs/{jobId}"
+}
+
+export type KnowledgeIngestJobErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Error
+   */
+  500: {
+    _tag: "NotFound"
+    message: string
+  }
+}
+
+export type KnowledgeIngestJobError = KnowledgeIngestJobErrors[keyof KnowledgeIngestJobErrors]
+
+export type KnowledgeIngestJobResponses = {
+  /**
+   * Success
+   */
+  200: {
+    code: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+    data: {
+      jobId: string
+      documentId: string
+      workspaceId: string
+      operation: "CREATE" | "UPDATE" | "DELETE"
+      status: "RUNNING" | "SUCCESS" | "FAILED" | "INTERRUPTED"
+      entities: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+      relations: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+      summary?: "SUCCESS" | "SKIPPED"
+      error?: string
+      createdAt: string
+      updatedAt: string
+    }
+  }
+}
+
+export type KnowledgeIngestJobResponse = KnowledgeIngestJobResponses[keyof KnowledgeIngestJobResponses]
+
+export type KnowledgeIngestJobsData = {
+  body?: never
+  path?: never
+  query: {
+    ids: string
+  }
+  url: "/serve/api/ingest/jobs"
+}
+
+export type KnowledgeIngestJobsErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type KnowledgeIngestJobsError = KnowledgeIngestJobsErrors[keyof KnowledgeIngestJobsErrors]
+
+export type KnowledgeIngestJobsResponses = {
+  /**
+   * Success
+   */
+  200: {
+    code: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+    data: Array<{
+      jobId: string
+      documentId: string
+      workspaceId: string
+      operation: "CREATE" | "UPDATE" | "DELETE"
+      status: "RUNNING" | "SUCCESS" | "FAILED" | "INTERRUPTED"
+      entities: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+      relations: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+      summary?: "SUCCESS" | "SKIPPED"
+      error?: string
+      createdAt: string
+      updatedAt: string
+    }>
+  }
+}
+
+export type KnowledgeIngestJobsResponse = KnowledgeIngestJobsResponses[keyof KnowledgeIngestJobsResponses]
+
+export type KnowledgeGraphEntitiesData = {
+  body?: never
+  path?: never
+  query: {
+    documentId: string
+  }
+  url: "/serve/api/graph/entities"
+}
+
+export type KnowledgeGraphEntitiesErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type KnowledgeGraphEntitiesError = KnowledgeGraphEntitiesErrors[keyof KnowledgeGraphEntitiesErrors]
+
+export type KnowledgeGraphEntitiesResponses = {
+  /**
+   * Success
+   */
+  200: {
+    data: Array<{
+      id: string
+      name: string
+      type: string
+      sourceDocumentId: string
+      scope: string
+      ownerId: string
+      status: string
+    }>
+  }
+}
+
+export type KnowledgeGraphEntitiesResponse = KnowledgeGraphEntitiesResponses[keyof KnowledgeGraphEntitiesResponses]
+
+export type KnowledgeGraphRelationsData = {
+  body?: never
+  path?: never
+  query: {
+    entityId: string
+    hops?: string
+  }
+  url: "/serve/api/graph/relations"
+}
+
+export type KnowledgeGraphRelationsErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type KnowledgeGraphRelationsError = KnowledgeGraphRelationsErrors[keyof KnowledgeGraphRelationsErrors]
+
+export type KnowledgeGraphRelationsResponses = {
+  /**
+   * Success
+   */
+  200: {
+    data: Array<{
+      id: string
+      headEntityId: string
+      tailEntityId: string
+      relationType: string
+      confidence: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+      source: string
+    }>
+  }
+}
+
+export type KnowledgeGraphRelationsResponse = KnowledgeGraphRelationsResponses[keyof KnowledgeGraphRelationsResponses]
+
+export type KnowledgeGraphEntityData = {
+  body?: never
+  path: {
+    id: string
+  }
+  query?: never
+  url: "/serve/api/graph/entity/{id}"
+}
+
+export type KnowledgeGraphEntityErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type KnowledgeGraphEntityError = KnowledgeGraphEntityErrors[keyof KnowledgeGraphEntityErrors]
+
+export type KnowledgeGraphEntityResponses = {
+  /**
+   * Success
+   */
+  200: {
+    data: {
+      id: string
+      name: string
+      type: string
+      sourceDocumentId: string
+      scope: string
+      ownerId: string
+      status: string
+    }
+  }
+}
+
+export type KnowledgeGraphEntityResponse = KnowledgeGraphEntityResponses[keyof KnowledgeGraphEntityResponses]
+
+export type KnowledgeGraphWorkspaceData = {
+  body?: never
+  path?: never
+  query: {
+    workspaceId: string
+  }
+  url: "/serve/api/graph/workspace"
+}
+
+export type KnowledgeGraphWorkspaceErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type KnowledgeGraphWorkspaceError = KnowledgeGraphWorkspaceErrors[keyof KnowledgeGraphWorkspaceErrors]
+
+export type KnowledgeGraphWorkspaceResponses = {
+  /**
+   * Success
+   */
+  200: {
+    data: {
+      entities: Array<{
+        id: string
+        name: string
+        type: string
+        sourceDocumentId: string
+        scope: string
+        ownerId: string
+        status: string
+      }>
+      relations: Array<{
+        id: string
+        headEntityId: string
+        tailEntityId: string
+        relationType: string
+        confidence: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+        source: string
+      }>
+    }
+  }
+}
+
+export type KnowledgeGraphWorkspaceResponse = KnowledgeGraphWorkspaceResponses[keyof KnowledgeGraphWorkspaceResponses]
+
+export type KnowledgeSummaryListData = {
+  body?: never
+  path?: never
+  query: {
+    llmPath: string
+    documentId: string
+  }
+  url: "/serve/api/summary"
+}
+
+export type KnowledgeSummaryListErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type KnowledgeSummaryListError = KnowledgeSummaryListErrors[keyof KnowledgeSummaryListErrors]
+
+export type KnowledgeSummaryListResponses = {
+  /**
+   * Success
+   */
+  200: {
+    exists: boolean
+    content?: string
+  }
+}
+
+export type KnowledgeSummaryListResponse = KnowledgeSummaryListResponses[keyof KnowledgeSummaryListResponses]
+
+export type KnowledgeSummaryWriteData = {
+  body?: {
+    llmPath: string
+    documentId: string
+    title: string
+    markdown: string
+  }
+  path?: never
+  query?: never
+  url: "/serve/api/summary"
+}
+
+export type KnowledgeSummaryWriteErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type KnowledgeSummaryWriteError = KnowledgeSummaryWriteErrors[keyof KnowledgeSummaryWriteErrors]
+
+export type KnowledgeSummaryWriteResponses = {
+  /**
+   * Success
+   */
+  200: {
+    documentId: string
+    status: "SUCCESS"
+    error?: string
+  }
+}
+
+export type KnowledgeSummaryWriteResponse = KnowledgeSummaryWriteResponses[keyof KnowledgeSummaryWriteResponses]
+
+export type KnowledgePptGenData = {
+  body?: {
+    taskId: string
+    prompt: string
+    style: {
+      fileName: string
+      fileContent: string
+    }
+    model?: string
+  }
+  path?: never
+  query?: never
+  url: "/serve/api/ppt/gen"
+}
+
+export type KnowledgePptGenErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type KnowledgePptGenError = KnowledgePptGenErrors[keyof KnowledgePptGenErrors]
+
+export type KnowledgePptGenResponses = {
+  /**
+   * Success
+   */
+  200: {
+    code: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+    data: Array<{
+      taskId: string
+      jobId: string
+      status: "RUNNING"
+    }>
+  }
+}
+
+export type KnowledgePptGenResponse = KnowledgePptGenResponses[keyof KnowledgePptGenResponses]
+
+export type KnowledgePptRenderCoverData = {
+  body?: {
+    taskId: string
+    style: {
+      fileName: string
+      fileContent: string
+    }
+  }
+  path?: never
+  query?: never
+  url: "/serve/api/ppt/render-cover"
+}
+
+export type KnowledgePptRenderCoverErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type KnowledgePptRenderCoverError = KnowledgePptRenderCoverErrors[keyof KnowledgePptRenderCoverErrors]
+
+export type KnowledgePptRenderCoverResponses = {
+  /**
+   * Success
+   */
+  200: {
+    code: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+    data: Array<{
+      taskId: string
+      jobId: string
+      status: "RUNNING"
+    }>
+  }
+}
+
+export type KnowledgePptRenderCoverResponse = KnowledgePptRenderCoverResponses[keyof KnowledgePptRenderCoverResponses]
+
+export type KnowledgePptJobData = {
+  body?: never
+  path: {
+    jobId: string
+  }
+  query?: never
+  url: "/serve/api/ppt/jobs/{jobId}"
+}
+
+export type KnowledgePptJobErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Error
+   */
+  500: {
+    _tag: "NotFound"
+    message: string
+  }
+}
+
+export type KnowledgePptJobError = KnowledgePptJobErrors[keyof KnowledgePptJobErrors]
+
+export type KnowledgePptJobResponses = {
+  /**
+   * Success
+   */
+  200: {
+    code: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+    data: {
+      jobId: string
+      taskId: string
+      status: "RUNNING" | "SUCCESS" | "FAILED" | "INTERRUPTED"
+      outputPath?: string
+      error?: string
+      progress?: {
+        stage?: string
+        totalSlides?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+        totalPages?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+        pagesDone?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+        imagesTotal?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+        imagesDone?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+        currentImage?: string
+      }
+      createdAt: string
+      updatedAt: string
+    }
+  }
+}
+
+export type KnowledgePptJobResponse = KnowledgePptJobResponses[keyof KnowledgePptJobResponses]
+
+export type KnowledgePptJobsData = {
+  body?: never
+  path?: never
+  query: {
+    ids: string
+  }
+  url: "/serve/api/ppt/jobs"
+}
+
+export type KnowledgePptJobsErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type KnowledgePptJobsError = KnowledgePptJobsErrors[keyof KnowledgePptJobsErrors]
+
+export type KnowledgePptJobsResponses = {
+  /**
+   * Success
+   */
+  200: {
+    code: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+    data: Array<{
+      jobId: string
+      taskId: string
+      status: "RUNNING" | "SUCCESS" | "FAILED" | "INTERRUPTED"
+      outputPath?: string
+      error?: string
+      progress?: {
+        stage?: string
+        totalSlides?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+        totalPages?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+        pagesDone?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+        imagesTotal?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+        imagesDone?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+        currentImage?: string
+      }
+      createdAt: string
+      updatedAt: string
+    }>
+  }
+}
+
+export type KnowledgePptJobsResponse = KnowledgePptJobsResponses[keyof KnowledgePptJobsResponses]
+
+export type KnowledgePptFileData = {
+  body?: never
+  path: {
+    jobId: string
+  }
+  query?: never
+  url: "/serve/api/ppt/file/{jobId}"
+}
+
+export type KnowledgePptFileErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Error
+   */
+  500: {
+    _tag: "NotFound"
+    message: string
+  }
+}
+
+export type KnowledgePptFileError = KnowledgePptFileErrors[keyof KnowledgePptFileErrors]
+
+export type KnowledgePptFileResponses = {
+  /**
+   * Success
+   */
+  200: Blob | File
+}
+
+export type KnowledgePptFileResponse = KnowledgePptFileResponses[keyof KnowledgePptFileResponses]
