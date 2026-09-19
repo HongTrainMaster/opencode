@@ -131,6 +131,10 @@ export const dict = {
   "ui.promptInput.chooseAgent": "選擇代理程式",
   "ui.promptInput.chooseModel": "選擇模型",
   "ui.promptInput.chooseVariant": "選擇模型變體",
+
+  "ui.promptInput.localKnowledge": "不查本地知識庫",
+
+  "ui.promptInput.localKnowledgeHint": "開啟後本次工作階段不再載入 llm-wiki 技能，直接用模型自身知識回答。",
   "ui.promptInput.send": "傳送",
   "ui.promptInput.stop": "停止",
 

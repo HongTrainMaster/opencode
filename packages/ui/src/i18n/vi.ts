@@ -124,6 +124,12 @@ export const dict: Record<string, string> = {
   "ui.promptInput.chooseAgent": "Chọn tác nhân",
   "ui.promptInput.chooseModel": "Chọn mô hình",
   "ui.promptInput.chooseVariant": "Chọn biến thể mô hình",
+
+  "ui.promptInput.localKnowledge": "Không tra cứu tri thức cục bộ",
+
+  "ui.promptInput.localKnowledgeHint":
+
+    "Bật để chỉ trả lời bằng kiến thức của mô hình: kỹ năng llm-wiki và kho tri thức cục bộ không được nạp.",
   "ui.promptInput.send": "Gửi",
   "ui.promptInput.stop": "Dừng",
   "ui.tabs.close": "Đóng tab",

@@ -124,6 +124,12 @@ export const dict: Record<string, string> = {
   "ui.promptInput.chooseAgent": "Agent seçin",
   "ui.promptInput.chooseModel": "Model seçin",
   "ui.promptInput.chooseVariant": "Model variantını seçin",
+
+  "ui.promptInput.localKnowledge": "Yerli bilik bazasını ötür",
+
+  "ui.promptInput.localKnowledgeHint":
+
+    "Yalnız modelin özü ilə cavab vermək üçün yandırın: llm-wiki bacarığı və yerli bilik bazası yüklənmir.",
   "ui.promptInput.send": "Göndər",
   "ui.promptInput.stop": "Dayandır",
   "ui.tabs.close": "Tabı bağla",

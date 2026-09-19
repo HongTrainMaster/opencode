@@ -124,6 +124,12 @@ export const dict: Record<string, string> = {
   "ui.promptInput.chooseAgent": "Agent kiezen",
   "ui.promptInput.chooseModel": "Model kiezen",
   "ui.promptInput.chooseVariant": "Modelvariant kiezen",
+
+  "ui.promptInput.localKnowledge": "Lokale kennisbank overslaan",
+
+  "ui.promptInput.localKnowledgeHint":
+
+    "Zet aan om alleen met het model te antwoorden: de llm-wiki-skill en de lokale kennisbank worden niet geladen.",
   "ui.promptInput.send": "Verzenden",
   "ui.promptInput.stop": "Stoppen",
   "ui.tabs.close": "Tabblad sluiten",

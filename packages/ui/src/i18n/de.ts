@@ -215,6 +215,12 @@ export const dict = {
   "ui.promptInput.chooseAgent": "Agenten auswählen",
   "ui.promptInput.chooseModel": "Modell auswählen",
   "ui.promptInput.chooseVariant": "Modellvariante auswählen",
+
+  "ui.promptInput.localKnowledge": "Lokale Wissensbasis überspringen",
+
+  "ui.promptInput.localKnowledgeHint":
+
+    "Aktivieren, um allein mit dem Modell zu antworten: der llm-wiki-Skill und die lokale Wissensbasis werden nicht geladen.",
   "ui.promptInput.send": "Senden",
   "ui.promptInput.stop": "Stoppen",
   "ui.tabs.close": "Tab schließen",

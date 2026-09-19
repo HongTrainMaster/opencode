@@ -16,6 +16,7 @@ import { useSync, type DirectorySync } from "@/context/sync"
 import { Identifier } from "@/utils/id"
 import { Worktree as WorktreeState } from "@/utils/worktree"
 import { buildRequestParts } from "./build-request-parts"
+import type { PromptInputLocalKnowledge } from "./local-knowledge"
 import { setCursorPosition } from "./editor-dom"
 import { formatServerError } from "@/utils/server-errors"
 import { ScopedKey } from "@/utils/server-scope"
@@ -229,6 +230,7 @@ type PromptSubmitInput = {
   onAbort?: () => void
   onSubmit?: () => void
   model?: ModelSelection
+  localKnowledge?: PromptInputLocalKnowledge
 }
 
 export function createPromptSubmit(input: PromptSubmitInput) {
@@ -417,6 +419,9 @@ export function createPromptSubmit(input: PromptSubmitInput) {
       if (created) {
         seed(sessionDirectory, created)
         session = created
+        // metadata 是整体替换语义、create 又不收它，只能创建后补写；
+        // 且必须赶在跳转前写完，否则重新挂载的输入框读不到开关状态。
+        await input.localKnowledge?.flush(created.id, sessionDirectory)
         await startTransition(() => {
           if (!session) return
           if (shouldAutoAccept) permissionState.enableAutoAccept(session.id, sessionDirectory)
@@ -440,6 +445,10 @@ export function createPromptSubmit(input: PromptSubmitInput) {
       })
       return
     }
+
+    // 刚在输入框里切过开关的话，等在途写入落库再发消息，
+    // 否则这条消息在服务端仍会按旧状态去检索本地知识库。
+    await input.localKnowledge?.flush(session.id, sessionDirectory)
 
     const model = {
       modelID: currentModel.id,

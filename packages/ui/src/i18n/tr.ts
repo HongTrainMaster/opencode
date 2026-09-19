@@ -135,6 +135,12 @@ export const dict = {
   "ui.promptInput.chooseAgent": "Ajan seç",
   "ui.promptInput.chooseModel": "Model seç",
   "ui.promptInput.chooseVariant": "Model varyantı seç",
+
+  "ui.promptInput.localKnowledge": "Yerel bilgi tabanını atla",
+
+  "ui.promptInput.localKnowledgeHint":
+
+    "Yalnızca modelle yanıt vermek için açın: llm-wiki becerisi ve yerel bilgi tabanı yüklenmez.",
   "ui.promptInput.send": "Gönder",
   "ui.promptInput.stop": "Durdur",
 

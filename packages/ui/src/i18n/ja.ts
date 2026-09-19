@@ -128,6 +128,10 @@ export const dict = {
   "ui.promptInput.chooseAgent": "エージェントを選択",
   "ui.promptInput.chooseModel": "モデルを選択",
   "ui.promptInput.chooseVariant": "モデルバリアントを選択",
+
+  "ui.promptInput.localKnowledge": "ローカル知識ベースを検索しない",
+
+  "ui.promptInput.localKnowledgeHint": "オンにすると llm-wiki スキルとローカル知識ベースを読み込まず、モデル自身の知識だけで回答します。",
   "ui.promptInput.send": "送信",
   "ui.promptInput.stop": "停止",
 

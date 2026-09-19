@@ -49,6 +49,11 @@ export const StatusMap = Schema.Record(Schema.String, SessionStatus.Info)
 export const UpdatePayload = Schema.Struct({
   title: Schema.optional(Schema.String),
   metadata: Schema.optional(Session.Metadata),
+  // 「不查本地知识库」开关。单独一个字段而不是让调用方回写整包 metadata：
+  // metadata 是整体替换语义，客户端回写会把 externalUserId 等属主字段一起抹掉。
+  knowledgeLocalSearch: Schema.optional(Schema.Boolean).annotate({
+    description: "Whether this session searches the local knowledge base. false disables the auto-loaded wiki skill.",
+  }),
   permission: Schema.optional(PermissionV1.Ruleset),
   time: Schema.optional(
     Schema.Struct({

@@ -9,6 +9,7 @@ import { Icon as IconV2 } from "@opencode-ai/ui/v2/icon"
 import { IconButtonV2 } from "@opencode-ai/ui/v2/icon-button-v2"
 import { KeybindV2 } from "@opencode-ai/ui/v2/keybind-v2"
 import { MenuV2 } from "@opencode-ai/ui/v2/menu-v2"
+import { Switch as SwitchV2 } from "@opencode-ai/ui/v2/switch-v2"
 import { TooltipV2 } from "@opencode-ai/ui/v2/tooltip-v2"
 import { AttachmentCardV2 } from "../attachment-card-v2"
 import { CommentCardV2 } from "../comment-card-v2"
@@ -251,6 +252,23 @@ export function PromptInputV2(props: PromptInputV2Props) {
                     control={control}
                   />
                 </Show>
+              )}
+            </Show>
+            <Show when={view.knowledge} keyed>
+              {(knowledge) => (
+                <TooltipV2
+                  placement="top"
+                  value={i18n.t("ui.promptInput.localKnowledgeHint")}
+                  class="ms-1 shrink-0"
+                >
+                  <SwitchV2
+                    data-action="prompt-knowledge"
+                    checked={knowledge.active()}
+                    onChange={() => knowledge.toggle()}
+                  >
+                    {i18n.t("ui.promptInput.localKnowledge")}
+                  </SwitchV2>
+                </TooltipV2>
               )}
             </Show>
           </div>

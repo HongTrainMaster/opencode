@@ -137,6 +137,12 @@ export const dict = {
   "ui.promptInput.chooseAgent": "Odaberi agenta",
   "ui.promptInput.chooseModel": "Odaberi model",
   "ui.promptInput.chooseVariant": "Odaberi varijantu modela",
+
+  "ui.promptInput.localKnowledge": "Preskoči lokalnu bazu znanja",
+
+  "ui.promptInput.localKnowledgeHint":
+
+    "Uključi za odgovaranje samo modelom: llm-wiki vještina i lokalna baza znanja se ne učitavaju.",
   "ui.promptInput.send": "Pošalji",
   "ui.promptInput.stop": "Zaustavi",
 

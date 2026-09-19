@@ -124,6 +124,12 @@ export const dict: Record<string, string> = {
   "ui.promptInput.chooseAgent": "Välj agent",
   "ui.promptInput.chooseModel": "Välj modell",
   "ui.promptInput.chooseVariant": "Välj modellvariant",
+
+  "ui.promptInput.localKnowledge": "Hoppa över lokal kunskapsbas",
+
+  "ui.promptInput.localKnowledgeHint":
+
+    "Slå på för att svara enbart med modellen: llm-wiki-färdigheten och den lokala kunskapsbasen laddas inte.",
   "ui.promptInput.send": "Skicka",
   "ui.promptInput.stop": "Stoppa",
   "ui.tabs.close": "Stäng fliken",

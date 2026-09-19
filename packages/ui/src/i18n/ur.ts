@@ -125,6 +125,12 @@ export const dict: Record<string, string> = {
   "ui.promptInput.chooseAgent": "ایجنٹ منتخب کریں",
   "ui.promptInput.chooseModel": "ماڈل منتخب کریں",
   "ui.promptInput.chooseVariant": "ماڈل کی قسم منتخب کریں",
+
+  "ui.promptInput.localKnowledge": "مقامی نالج بیس نہ دیکھیں",
+
+  "ui.promptInput.localKnowledgeHint":
+
+    "اسے آن کریں تاکہ صرف ماڈل سے جواب ملے: llm-wiki اسکل اور مقامی نالج بیس لوڈ نہیں ہوتے۔",
   "ui.promptInput.send": "بھیجیں",
   "ui.promptInput.stop": "روکیں",
   "ui.tabs.close": "ٹیب بند کریں",

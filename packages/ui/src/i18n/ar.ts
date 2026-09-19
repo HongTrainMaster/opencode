@@ -145,6 +145,12 @@ export const dict = {
   "ui.promptInput.chooseAgent": "اختيار وكيل",
   "ui.promptInput.chooseModel": "اختيار نموذج",
   "ui.promptInput.chooseVariant": "اختيار متغير النموذج",
+
+  "ui.promptInput.localKnowledge": "تخطي قاعدة المعرفة المحلية",
+
+  "ui.promptInput.localKnowledgeHint":
+
+    "شغّله للإجابة من النموذج وحده: لا يتم تحميل مهارة llm-wiki ولا قاعدة المعرفة المحلية.",
   "ui.promptInput.send": "إرسال",
   "ui.promptInput.stop": "إيقاف",
 

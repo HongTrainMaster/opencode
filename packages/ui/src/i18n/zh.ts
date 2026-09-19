@@ -131,6 +131,8 @@ export const dict = {
   "ui.promptInput.chooseAgent": "选择智能体",
   "ui.promptInput.chooseModel": "选择模型",
   "ui.promptInput.chooseVariant": "选择模型变体",
+  "ui.promptInput.localKnowledge": "不查本地知识库",
+  "ui.promptInput.localKnowledgeHint": "打开后本次会话不再加载 llm-wiki 技能，直接用模型自身知识回答。",
   "ui.promptInput.send": "发送",
   "ui.promptInput.stop": "停止",
 

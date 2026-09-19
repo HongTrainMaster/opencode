@@ -144,6 +144,12 @@ export const dict: Record<string, string> = {
   "ui.promptInput.chooseAgent": "Вибрати агента",
   "ui.promptInput.chooseModel": "Вибрати модель",
   "ui.promptInput.chooseVariant": "Вибрати варіант моделі",
+
+  "ui.promptInput.localKnowledge": "Не шукати в локальній базі знань",
+
+  "ui.promptInput.localKnowledgeHint":
+
+    "Увімкніть, щоб відповідати лише силами моделі: навичку llm-wiki та локальну базу знань не завантажено.",
   "ui.promptInput.send": "Надіслати",
   "ui.promptInput.stop": "Зупинити",
 

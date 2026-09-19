@@ -135,6 +135,12 @@ export const dict: Record<string, string> = {
   "ui.promptInput.chooseAgent": "Pilih agen",
   "ui.promptInput.chooseModel": "Pilih model",
   "ui.promptInput.chooseVariant": "Pilih varian model",
+
+  "ui.promptInput.localKnowledge": "Lewati basis pengetahuan lokal",
+
+  "ui.promptInput.localKnowledgeHint":
+
+    "Aktifkan agar menjawab hanya dengan model: skill llm-wiki dan basis pengetahuan lokal tidak dimuat.",
   "ui.promptInput.send": "Kirim",
   "ui.promptInput.stop": "Hentikan",
 

@@ -105,6 +105,10 @@ export const dict = {
   "ui.promptInput.chooseAgent": "에이전트 선택",
   "ui.promptInput.chooseModel": "모델 선택",
   "ui.promptInput.chooseVariant": "모델 변형 선택",
+
+  "ui.promptInput.localKnowledge": "로컬 지식 베이스 검색 안 함",
+
+  "ui.promptInput.localKnowledgeHint": "켜면 llm-wiki 스킬과 로컬 지식 베이스를 불러오지 않고 모델 자체 지식으로만 답합니다.",
   "ui.promptInput.send": "전송",
   "ui.promptInput.stop": "중지",
 

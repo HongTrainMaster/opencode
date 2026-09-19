@@ -540,6 +540,81 @@ withMcpInstructions.instance(
   15_000,
 )
 
+// Local knowledge search switch
+
+const probeSkillDir = "probe-skills"
+
+const probeSkillConfig = (url: string) => ({
+  ...providerCfg(url),
+  skills: { defaultSkill: "probe-skill", paths: [probeSkillDir] },
+})
+
+const writeProbeSkill = Effect.fn("test.writeProbeSkill")(function* (dir: string) {
+  yield* writeText(
+    path.join(dir, probeSkillDir, "probe-skill", "SKILL.md"),
+    [
+      "---",
+      "name: probe-skill",
+      "description: A skill probe.",
+      "---",
+      "",
+      "# probe-skill",
+      "",
+      "PROBE_SKILL_BODY",
+      "",
+    ].join("\n"),
+  )
+})
+
+it.instance("auto-loads the configured default skill into the system prompt", () =>
+  Effect.gen(function* () {
+    const { dir, llm } = yield* useServerConfig(probeSkillConfig)
+    yield* writeProbeSkill(dir)
+    const prompt = yield* SessionPrompt.Service
+    const sessions = yield* Session.Service
+    const chat = yield* sessions.create({
+      title: "Pinned",
+      permission: [{ permission: "*", pattern: "*", action: "allow" }],
+    })
+    yield* llm.hang
+    yield* user(chat.id, "hello")
+
+    const fiber = yield* prompt.loop({ sessionID: chat.id }).pipe(Effect.forkChild)
+    yield* awaitWithTimeout(llm.wait(1), "timed out waiting for probe skill request", "10 seconds")
+
+    const body = JSON.stringify((yield* llm.hits)[0]?.body)
+    expect(body).toContain("<auto_loaded_skill")
+    expect(body).toContain("PROBE_SKILL_BODY")
+    yield* Fiber.interrupt(fiber)
+  }),
+)
+
+it.instance("omits the default skill and its catalog entry when local knowledge search is off", () =>
+  Effect.gen(function* () {
+    const { dir, llm } = yield* useServerConfig(probeSkillConfig)
+    yield* writeProbeSkill(dir)
+    const prompt = yield* SessionPrompt.Service
+    const sessions = yield* Session.Service
+    const chat = yield* sessions.create({
+      title: "Pinned",
+      metadata: { knowledgeLocalSearch: false },
+      permission: [{ permission: "*", pattern: "*", action: "allow" }],
+    })
+    yield* llm.hang
+    yield* user(chat.id, "hello")
+
+    const fiber = yield* prompt.loop({ sessionID: chat.id }).pipe(Effect.forkChild)
+    yield* awaitWithTimeout(llm.wait(1), "timed out waiting for probe skill request", "10 seconds")
+
+    const body = JSON.stringify((yield* llm.hits)[0]?.body)
+    expect(body).not.toContain("<auto_loaded_skill")
+    expect(body).not.toContain("PROBE_SKILL_BODY")
+    expect(body).not.toContain("<name>probe-skill</name>")
+    expect(body).toContain("<knowledge_local_search_disabled>")
+    yield* Fiber.interrupt(fiber)
+  }),
+)
+
 it.instance("legacy prompt emits message events without session.next events", () =>
   Effect.gen(function* () {
     const events = yield* EventV2Bridge.Service

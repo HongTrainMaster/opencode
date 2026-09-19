@@ -44,7 +44,10 @@ export function provider(model: Provider.Model) {
 
 export interface Interface {
   readonly environment: (model: Provider.Model) => Effect.Effect<string[]>
-  readonly skills: (agent: Agent.Info) => Effect.Effect<string | undefined>
+  readonly skills: (
+    agent: Agent.Info,
+    options?: { excludeDefaultSkill?: boolean },
+  ) => Effect.Effect<string | undefined>
   readonly mcp: (agent: Agent.Info, permission?: PermissionV1.Ruleset) => Effect.Effect<string | undefined>
   readonly defaultSkill: () => Effect.Effect<string | undefined>
 }
@@ -99,17 +102,26 @@ const layer = Layer.effect(
         ].filter((part): part is string => part !== undefined)
       }),
 
-      skills: Effect.fn("SystemPrompt.skills")(function* (agent: Agent.Info) {
+      skills: Effect.fn("SystemPrompt.skills")(function* (
+        agent: Agent.Info,
+        options?: { excludeDefaultSkill?: boolean },
+      ) {
         if (Permission.disabled(["skill"], agent.permission).has("skill")) return
 
         const list = yield* skill.available(agent)
+        // 关掉本地知识库检索的会话里，连技能清单都不能出现 llm-wiki，
+        // 否则模型仍会用 skill 工具把它捞回来，"完全不加载"就不成立。
+        const hidden = options?.excludeDefaultSkill ? (yield* config.get()).skills?.defaultSkill : undefined
 
         return [
           "Skills provide specialized instructions and workflows for specific tasks.",
           "Use the skill tool to load a skill when a task matches its description.",
           // the agents seem to ingest the information about skills a bit better if we present a more verbose
           // version of them here and a less verbose version in tool description, rather than vice versa.
-          Skill.fmt(list, { verbose: true }),
+          Skill.fmt(
+            hidden === undefined ? list : list.filter((item) => item.name !== hidden),
+            { verbose: true },
+          ),
         ].join("\n")
       }),
 

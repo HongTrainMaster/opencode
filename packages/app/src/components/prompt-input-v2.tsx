@@ -14,6 +14,7 @@ import { normalizePromptHistoryEntry, promptLength, type PromptHistoryComment } 
 import { createPersistedPromptInputHistory } from "@/components/prompt-input/history-store"
 import { promptDesignPlaceholder, promptPlaceholder } from "@/components/prompt-input/placeholder"
 import { createPromptSubmit } from "@/components/prompt-input/submit"
+import { LOCAL_KNOWLEDGE_KEY, createPromptInputLocalKnowledge } from "@/components/prompt-input/local-knowledge"
 import { selectionFromLines, type SelectedLineRange, useFile } from "@/context/file"
 import { useComments } from "@/context/comments"
 import { useCommand } from "@/context/command"
@@ -190,6 +191,24 @@ export function usePromptInputV2Controller(props: PromptInputV2ControllerProps):
     )
   }
 
+  // 「不查本地知识库」开关的状态存在会话 metadata 上，新建会话由 submit 在创建后补写
+  const localKnowledge = createPromptInputLocalKnowledge({
+    sessionID: () => props.controls.session.id,
+    metadata: (id) => sync().session.get(id)?.metadata,
+    directory: (id) => sync().session.get(id)?.directory ?? sdk().directory,
+    update: async ({ sessionID, directory, off }) => {
+      await sdk().client.session.update({ sessionID, directory, [LOCAL_KNOWLEDGE_KEY]: !off })
+      const info = sync().session.get(sessionID)
+      if (info) sync().session.remember({ ...info, metadata: { ...info.metadata, [LOCAL_KNOWLEDGE_KEY]: !off } })
+    },
+    onError: (error) =>
+      showToast({
+        variant: "error",
+        title: language.t("common.requestFailed"),
+        description: error instanceof Error ? error.message : String(error),
+      }),
+  })
+
   const accepting = createMemo(() => {
     const id = props.controls.session.id
     if (!id) return permission.isAutoAcceptingDirectory(sdk().directory)
@@ -219,6 +238,7 @@ export function usePromptInputV2Controller(props: PromptInputV2ControllerProps):
     onAbort: props.onAbort,
     onSubmit: props.onSubmit,
     model: props.controls.model.selection,
+    localKnowledge,
   })
 
   const referenceDescription = (reference: ReferenceInfo) =>
@@ -384,6 +404,7 @@ export function usePromptInputV2Controller(props: PromptInputV2ControllerProps):
     },
     view: {
       placeholder: designPlaceholder,
+      knowledge: { active: localKnowledge.active, toggle: localKnowledge.toggle },
       get agent() {
         return props.controls.agents.visible && props.controls.agents.options.length > 0
           ? {

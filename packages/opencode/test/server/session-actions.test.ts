@@ -108,6 +108,53 @@ describe("session action routes", () => {
   )
 
   it.instance(
+    "local knowledge search switch updates one key and keeps the rest of the metadata",
+    () =>
+      Effect.gen(function* () {
+        const test = yield* TestInstance
+        const headers = { "Content-Type": "application/json" }
+
+        const created = yield* requestInDirectory("/session", test.directory, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            title: "kb-session",
+            metadata: { externalUserId: "1", externalTenantId: "000000" },
+          }),
+        })
+        expect(created.status).toBe(200)
+        const session = (yield* created.json) as SessionNs.Info
+
+        const off = yield* requestInDirectory(`/session/${session.id}`, test.directory, {
+          method: "PATCH",
+          headers,
+          body: JSON.stringify({ knowledgeLocalSearch: false }),
+        })
+        expect(off.status).toBe(200)
+        expect(((yield* off.json) as SessionNs.Info).metadata).toEqual({
+          externalUserId: "1",
+          externalTenantId: "000000",
+          knowledgeLocalSearch: false,
+        })
+
+        const on = yield* requestInDirectory(`/session/${session.id}`, test.directory, {
+          method: "PATCH",
+          headers,
+          body: JSON.stringify({ knowledgeLocalSearch: true }),
+        })
+        expect(on.status).toBe(200)
+        expect(((yield* on.json) as SessionNs.Info).metadata).toEqual({
+          externalUserId: "1",
+          externalTenantId: "000000",
+          knowledgeLocalSearch: true,
+        })
+
+        yield* SessionNs.Service.use((svc) => svc.remove(session.id).pipe(Effect.ignore))
+      }),
+    { git: true },
+  )
+
+  it.instance(
     "abort route returns success",
     () =>
       Effect.gen(function* () {

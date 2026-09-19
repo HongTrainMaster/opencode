@@ -209,6 +209,12 @@ export const dict = {
   "ui.promptInput.chooseAgent": "Vælg agent",
   "ui.promptInput.chooseModel": "Vælg model",
   "ui.promptInput.chooseVariant": "Vælg modelvariant",
+
+  "ui.promptInput.localKnowledge": "Spring lokal vidensbase over",
+
+  "ui.promptInput.localKnowledgeHint":
+
+    "Slå til for at svare alene med modellen: llm-wiki-færdigheden og den lokale vidensbase indlæses ikke.",
   "ui.promptInput.send": "Send",
   "ui.promptInput.stop": "Stop",
 

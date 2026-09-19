@@ -133,6 +133,12 @@ export const dict = {
   "ui.promptInput.chooseAgent": "Elegir agente",
   "ui.promptInput.chooseModel": "Elegir modelo",
   "ui.promptInput.chooseVariant": "Elegir variante del modelo",
+
+  "ui.promptInput.localKnowledge": "Omitir base de conocimiento local",
+
+  "ui.promptInput.localKnowledgeHint":
+
+    "Actívalo para responder solo con el modelo: la skill llm-wiki y la base de conocimiento local no se cargan.",
   "ui.promptInput.send": "Enviar",
   "ui.promptInput.stop": "Detener",
 

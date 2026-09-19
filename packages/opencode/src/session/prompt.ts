@@ -28,6 +28,7 @@ import { Command } from "../command"
 import { pathToFileURL, fileURLToPath } from "url"
 import { Config } from "@/config/config"
 import { sessionIngestPolicy } from "../knowledge/ingest-policy"
+import { localSearchDisabledPrompt, shouldSkipLocalKnowledge } from "../knowledge/local-search-policy"
 import { ConfigMarkdown } from "@/config/markdown"
 import { SessionSummary } from "./summary"
 import { NamedError } from "@opencode-ai/core/util/error"
@@ -1191,6 +1192,8 @@ const layer = Layer.effect(
         const session = yield* sessions.get(sessionID).pipe(Effect.orDie)
         // 会话身份在整轮循环里不变，入库策略只算一次
         const ingestPolicy = yield* ingestPolicyFor(sessions, session)
+        // 「不查本地知识库」开关同样整轮不变
+        const skipLocalKnowledge = shouldSkipLocalKnowledge(session.metadata)
 
         while (true) {
           yield* status.set(sessionID, { type: "busy" })
@@ -1362,7 +1365,7 @@ const layer = Layer.effect(
             yield* plugin.trigger("experimental.chat.messages.transform", {}, { messages: msgs })
 
             const [skills, env, instructions, mcpInstructions, defaultSkill, modelMsgs] = yield* Effect.all([
-              sys.skills(agent),
+              sys.skills(agent, { excludeDefaultSkill: skipLocalKnowledge }),
               sys.environment(model),
               instruction.system().pipe(Effect.orDie),
               sys.mcp(agent, session.permission),
@@ -1373,8 +1376,10 @@ const layer = Layer.effect(
               ...env,
               ...instructions,
               ...(mcpInstructions ? [mcpInstructions] : []),
-              ...(defaultSkill ? [defaultSkill] : []),
+              // 不查本地知识库：整段技能正文不进系统提示词
+              ...(skipLocalKnowledge || !defaultSkill ? [] : [defaultSkill]),
               ...(skills ? [skills] : []),
+              ...(skipLocalKnowledge ? [localSearchDisabledPrompt()] : []),
               // 放最后：入库权限策略要压过技能/项目指令里的写法
               ...(ingestPolicy ? [ingestPolicy] : []),
             ]

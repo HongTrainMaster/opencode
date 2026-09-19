@@ -129,6 +129,10 @@ export const dict = {
   "ui.promptInput.chooseAgent": "เลือกเอเจนต์",
   "ui.promptInput.chooseModel": "เลือกโมเดล",
   "ui.promptInput.chooseVariant": "เลือกรูปแบบโมเดล",
+
+  "ui.promptInput.localKnowledge": "ไม่ค้นฐานความรู้ในเครื่อง",
+
+  "ui.promptInput.localKnowledgeHint": "เปิดเพื่อตอบจากโมเดลเท่านั้น: จะไม่โหลดสกิล llm-wiki และฐานความรู้ในเครื่อง",
   "ui.promptInput.send": "ส่ง",
   "ui.promptInput.stop": "หยุด",
 

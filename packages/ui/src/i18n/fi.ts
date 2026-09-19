@@ -191,6 +191,12 @@ export const dict: Record<string, string> = {
   "ui.promptInput.chooseAgent": "Valitse agentti",
   "ui.promptInput.chooseModel": "Valitse malli",
   "ui.promptInput.chooseVariant": "Valitse mallivariantti",
+
+  "ui.promptInput.localKnowledge": "Ohita paikallinen tietopohja",
+
+  "ui.promptInput.localKnowledgeHint":
+
+    "Kytke päälle, niin vastataan pelkällä mallilla: llm-wiki-taitoa ja paikallista tietopohjaa ei ladata.",
   "ui.promptInput.send": "Lähetä",
   "ui.promptInput.stop": "Pysäytä",
   "ui.tabs.close": "Sulje välilehti",

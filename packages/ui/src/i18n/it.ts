@@ -129,6 +129,12 @@ export const dict: Record<string, string> = {
   "ui.promptInput.chooseAgent": "Scegli agente",
   "ui.promptInput.chooseModel": "Scegli modello",
   "ui.promptInput.chooseVariant": "Scegli variante del modello",
+
+  "ui.promptInput.localKnowledge": "Ignora base di conoscenza locale",
+
+  "ui.promptInput.localKnowledgeHint":
+
+    "Attiva per rispondere solo con il modello: la skill llm-wiki e la base di conoscenza locale non vengono caricate.",
   "ui.promptInput.send": "Invia",
   "ui.promptInput.stop": "Interrompi",
   "ui.tabs.close": "Chiudi scheda",

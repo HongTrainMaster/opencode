@@ -34,6 +34,11 @@ export type PromptInputV2ViewConfig = {
   agent?: PromptInputV2SelectControl
   model?: PromptInputV2SelectControl
   variant?: PromptInputV2SelectControl
+  /** 「不查本地知识库」开关。不传就不渲染，别的使用方不受影响。 */
+  knowledge?: {
+    active: Accessor<boolean>
+    toggle: () => void
+  }
   submit: {
     stopping: Accessor<boolean>
     working?: Accessor<boolean>

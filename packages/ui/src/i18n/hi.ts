@@ -125,6 +125,12 @@ export const dict: Record<string, string> = {
   "ui.promptInput.chooseAgent": "एजेंट चुनें",
   "ui.promptInput.chooseModel": "मॉडल चुनें",
   "ui.promptInput.chooseVariant": "मॉडल वेरिएंट चुनें",
+
+  "ui.promptInput.localKnowledge": "स्थानीय ज्ञान आधार छोड़ें",
+
+  "ui.promptInput.localKnowledgeHint":
+
+    "इसे चालू करें ताकि केवल मॉडल से उत्तर मिले: llm-wiki स्किल और स्थानीय ज्ञान आधार लोड नहीं होते।",
   "ui.promptInput.send": "भेजें",
   "ui.promptInput.stop": "रोकें",
 

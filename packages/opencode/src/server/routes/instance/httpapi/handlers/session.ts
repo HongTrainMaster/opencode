@@ -6,6 +6,7 @@ import { Command } from "@/command"
 import { Permission } from "@/permission"
 import { SessionShare } from "@/share/session"
 import { Session } from "@/session/session"
+import { SKIP_LOCAL_KNOWLEDGE_KEY } from "@/knowledge/local-search-policy"
 import { SessionCompaction } from "@/session/compaction"
 import { MessageV2 } from "@/session/message-v2"
 import { SessionPrompt } from "@/session/prompt"
@@ -307,6 +308,13 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
       }
       if (ctx.payload.metadata !== undefined) {
         yield* session.setMetadata({ sessionID: ctx.params.sessionID, metadata: ctx.payload.metadata })
+      }
+      // 读-改-写：只动这一个键，属主字段不受影响（metadata 本身是整体替换语义）
+      if (ctx.payload.knowledgeLocalSearch !== undefined) {
+        yield* session.setMetadata({
+          sessionID: ctx.params.sessionID,
+          metadata: { ...current.metadata, [SKIP_LOCAL_KNOWLEDGE_KEY]: ctx.payload.knowledgeLocalSearch },
+        })
       }
       if (ctx.payload.permission !== undefined) {
         yield* session.setPermission({
