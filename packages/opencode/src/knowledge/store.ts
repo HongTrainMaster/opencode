@@ -100,6 +100,8 @@ export interface KnowledgeGraphStoreShape {
   readonly listIngestJobs: (ids: string[]) => Effect.Effect<IngestJobRow[]>
   /** 重启兜底：把遗留 RUNNING 记录标记为 INTERRUPTED（幂等）。返回受影响行数 */
   readonly interruptRunningIngestJobs: () => Effect.Effect<number>
+  /** 统计指定 documentId 下仍处于活动态（RUNNING）的入库任务数（用于同文档去重，防止重复提交叠打印信号量） */
+  readonly countActiveByDocument: (documentId: string) => Effect.Effect<number>
   readonly insertPptJob: (row: {
     id: string
     taskId: string
@@ -339,6 +341,14 @@ function makeStore(filename: string): KnowledgeGraphStoreShape {
         // 按传入顺序返回（SQLite IN 不保序）
         const byId = new Map(rows.map((r) => [r.id, rowToIngestJob(r)]))
         return ids.map((id) => byId.get(id)).filter((r): r is IngestJobRow => r !== undefined)
+      }),
+
+    countActiveByDocument: (documentId) =>
+      Effect.sync(() => {
+        const row = db
+          .prepare("SELECT COUNT(*) AS n FROM kg_ingest_job WHERE document_id = ? AND status = 'RUNNING'")
+          .get(documentId) as { n: number } | undefined
+        return row?.n ?? 0
       }),
 
     interruptRunningIngestJobs: () =>

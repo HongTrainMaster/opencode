@@ -47,6 +47,9 @@ const wikiSessionSuccessLayer = WikiSessionService.test(() =>
   Effect.succeed({ status: "SUCCESS" as const, sourcePath: wikiSourcePage }),
 )
 
+// 挂起的 wiki 会话：模拟模型调用永不返回 → 用于验证超时降级不会永久占用信号量/任务
+const wikiSessionHangingLayer = WikiSessionService.test(() => Effect.never)
+
 /** 轮询 job 直到终态（RUNNING/SUCCESS/FAILED/INTERRUPTED 中的终态为 SUCCESS/FAILED/INTERRUPTED） */
 const pollUntilDone = (
   jobService: IngestJobServiceShape,
@@ -359,4 +362,81 @@ describe("IngestService", () => {
     expect(job.status).toBe("FAILED")
     expect(job.error).toContain("extract exploded")
   })
+
+  it("times out a hanging wiki session and degrades to SKIPPED (no permanent hang)", async () => {
+    const prev = process.env.KNOWLEDGE_INGEST_WIKI_TIMEOUT_MS
+    process.env.KNOWLEDGE_INGEST_WIKI_TIMEOUT_MS = "100" // 100ms 超时
+    try {
+      const { job, store } = await run(
+        Effect.gen(function* () {
+          const svc = yield* IngestService
+          const jobService = yield* IngestJobService
+          const kg = yield* KnowledgeGraphStore
+          const items = yield* svc.ingest({
+            workspaceId: "kb_1",
+            identity,
+            documents: [
+              {
+                documentId: "timeout_doc",
+                title: "超时文档",
+                format: "txt",
+                llmPath: tmpdir(),
+                operation: "CREATE",
+                fileContent: Buffer.from("超时测试正文 人力资源部 负责 考勤").toString("base64"),
+              },
+            ],
+          })
+          const job = yield* pollUntilDone(jobService, items[0]!.jobId)
+          return { job, store: kg }
+        }),
+        summaryWriterLayerNoop,
+        wikiSessionHangingLayer, // 挂起 → 触发 100ms 超时
+      )
+      // 超时后任务必须有终态（不再是 RUNNING 挂死），且摘要降级为 SKIPPED
+      expect(job.status).not.toBe("RUNNING")
+      expect(job.summary).toBe("SKIPPED")
+      // 图谱（实体）在 summary 前已写入
+      const entities = await Effect.runPromise(
+        store.listEntitiesByDocument({ documentId: "timeout_doc", userId: "user_1" }),
+      )
+      expect(entities.length).toBeGreaterThan(0)
+    } finally {
+      if (prev === undefined) delete process.env.KNOWLEDGE_INGEST_WIKI_TIMEOUT_MS
+      else process.env.KNOWLEDGE_INGEST_WIKI_TIMEOUT_MS = prev
+    }
+  }, 20000)
+
+  it("dedups: skips creating a duplicate job for a document with an active RUNNING job", async () => {
+    const prev = process.env.KNOWLEDGE_INGEST_WIKI_TIMEOUT_MS
+    delete process.env.KNOWLEDGE_INGEST_WIKI_TIMEOUT_MS // 本测试关闭超时，让挂起任务保持 RUNNING
+    try {
+      const result = await run(
+        Effect.gen(function* () {
+          const svc = yield* IngestService
+          const jobService = yield* IngestJobService
+          const doc = {
+            documentId: "dedup_doc",
+            title: "去重文档",
+            format: "txt",
+            llmPath: tmpdir(),
+            operation: "CREATE" as const,
+            fileContent: Buffer.from("去重测试正文 人力资源部 负责 考勤").toString("base64"),
+          }
+          // 第一次提交：挂起 wiki → 任务保持 RUNNING
+          const first = yield* svc.ingest({ workspaceId: "kb_1", identity, documents: [doc] })
+          // 第二次提交同一文档：应被去重，不产生新 job
+          const second = yield* svc.ingest({ workspaceId: "kb_1", identity, documents: [doc] })
+          return { first: first.length, second: second.length }
+        }),
+        summaryWriterLayerNoop,
+        wikiSessionHangingLayer,
+      )
+      // 第一次返回 1 个 job；第二次（同文档 RUNNING 中）应返回 0 个
+      expect(result.first).toBe(1)
+      expect(result.second).toBe(0)
+    } finally {
+      if (prev === undefined) delete process.env.KNOWLEDGE_INGEST_WIKI_TIMEOUT_MS
+      else process.env.KNOWLEDGE_INGEST_WIKI_TIMEOUT_MS = prev
+    }
+  }, 20000)
 })

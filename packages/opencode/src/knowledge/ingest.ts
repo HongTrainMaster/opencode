@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, Schema, Semaphore } from "effect"
+import { Context, Duration, Effect, Layer, Schema, Semaphore } from "effect"
 import { readFile } from "node:fs/promises"
 import type { ExternalIdentityInfo } from "@opencode-ai/server/auth/external-identity"
 import { parseDocument } from "./doc-parser"
@@ -65,6 +65,11 @@ export class IngestService extends Context.Service<IngestService, IngestServiceS
         10,
       )
       const semaphore = yield* Semaphore.make(Math.max(1, Number.isFinite(wikiConcurrency) ? wikiConcurrency : 2))
+      // wiki 会话（LLM 摘要）单任务超时：防止模型调用挂起导致信号量槽位被永久占用、
+      // 后续所有文档的 summary 排队卡死。超时后任务标 SKIPPED（图谱/实体不受影响）。
+      // 环境变量可调，默认 180 秒；0 = 不设超时。
+      const wikiTimeoutMs = Number.parseInt(process.env.KNOWLEDGE_INGEST_WIKI_TIMEOUT_MS ?? "180000", 10)
+      const wikiTimeout = Number.isFinite(wikiTimeoutMs) && wikiTimeoutMs > 0 ? Duration.millis(wikiTimeoutMs) : undefined
 
       return IngestService.of({
         ingest: (args) =>
@@ -138,7 +143,8 @@ export class IngestService extends Context.Service<IngestService, IngestServiceS
                   })
                   // Build entity/source pages through a headless opencode session
                   // that runs the llm-wiki ingest workflow, so Q&A can find them.
-                  const wikiResult = yield* semaphore.withPermits(1)(
+                  // 带超时：模型调用挂起时不再永久占用信号量，超时降级 SKIPPED（图谱已完成）。
+                  const wikiRun = semaphore.withPermits(1)(
                     wikiSession.build({
                       workspaceLlmPath: doc.llmPath,
                       documentId: doc.documentId,
@@ -146,6 +152,22 @@ export class IngestService extends Context.Service<IngestService, IngestServiceS
                       text: parsed.text,
                     }),
                   )
+                  const timed = wikiTimeout
+                    ? yield* Effect.result(wikiRun.pipe(Effect.timeout(wikiTimeout)))
+                    : yield* Effect.result(wikiRun)
+                  let wikiResult: { status: "SUCCESS" | "SKIPPED"; sourcePath?: string; error?: string }
+                  if (timed._tag === "Failure") {
+                    const err = timed.failure instanceof Error ? timed.failure.message : String(timed.failure)
+                    wikiResult = { status: "SKIPPED", error: `wiki session timed out or failed: ${err}` }
+                    yield* Effect.logWarning("knowledge summary skipped (timeout/failure)", {
+                      documentId: doc.documentId,
+                      workspaceId: args.workspaceId,
+                      workspaceLlmPath: doc.llmPath,
+                      error: err,
+                    })
+                  } else {
+                    wikiResult = timed.success
+                  }
                   if (wikiResult.status === "SUCCESS" && wikiResult.sourcePath) {
                     // 根因1修复：llm-wiki 按"日期-标题"命名源页，业务端用 documentId 查不到。
                     // 把 LLM 生成的源页正文以 {documentId}.md 为名落盘，供 /serve/api/summary 读取。
@@ -204,6 +226,17 @@ export class IngestService extends Context.Service<IngestService, IngestServiceS
 
             const items: IngestSubmitItem[] = []
             for (const doc of args.documents) {
+              // 同文档去重：若已有 RUNNING 活动任务（之前挂起的 summary 仍占位），跳过本次提交，
+              // 避免现场每 30 分钟重发把信号量槽位越占越多、加重堵塞。返回该活动 job 状态。
+              const active = yield* store.countActiveByDocument(doc.documentId)
+              if (active > 0) {
+                yield* Effect.logWarning("knowledge ingest dedup: skip duplicate", {
+                  documentId: doc.documentId,
+                  workspaceId: args.workspaceId,
+                  activeRunning: active,
+                })
+                continue
+              }
               const jobId = yield* jobService.start({
                 documentId: doc.documentId,
                 workspaceId: args.workspaceId,
