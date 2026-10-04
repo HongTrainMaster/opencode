@@ -8,6 +8,7 @@ import { ShellTool } from "./shell"
 import { EditTool } from "./edit"
 import { GlobTool } from "./glob"
 import { GrepTool } from "./grep"
+import { WikiFileTool } from "./wiki-file"
 import { ReadTool } from "./read"
 import { TaskTool } from "./task"
 import { Database } from "@opencode-ai/core/database/database"
@@ -104,6 +105,7 @@ const layer = Layer.effect(
     const websearch = yield* WebSearchTool
     const shell = yield* ShellTool
     const globtool = yield* GlobTool
+    const wikiFileTool = yield* WikiFileTool
     const writetool = yield* WriteTool
     const edit = yield* EditTool
     const greptool = yield* GrepTool
@@ -207,6 +209,7 @@ const layer = Layer.effect(
           read: Tool.init(read),
           glob: Tool.init(globtool),
           grep: Tool.init(greptool),
+          wikiFile: Tool.init(wikiFileTool),
           edit: Tool.init(edit),
           write: Tool.init(writetool),
           task: Tool.init(task),
@@ -230,6 +233,7 @@ const layer = Layer.effect(
             tool.read,
             tool.glob,
             tool.grep,
+            tool.wikiFile,
             tool.edit,
             tool.write,
             tool.task,
