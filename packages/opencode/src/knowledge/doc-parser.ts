@@ -89,7 +89,10 @@ export async function extractDocxText(buf: Uint8Array): Promise<string> {
   try {
     const entries = await reader.getEntries()
     const doc = entries.find((e) => e.filename === "word/document.xml")
-    if (!doc) return ""
+    if (!doc) {
+      console.warn("[doc-parser] docx: word/document.xml not found (not a valid docx?), returning empty text")
+      return ""
+    }
     const xml = await doc.getData!(new TextWriter())
     return stripXml(xml)
   } finally {
@@ -132,7 +135,8 @@ async function extractTextViaOcr(content: string, format: string): Promise<strin
           timeout: 120_000,
         })
         ocrPath = join(dir, "page-1.png")
-      } catch {
+      } catch (error) {
+        console.warn(`[doc-parser] OCR: soffice/pdftoppm failed for format=${rawExt}:`, error)
         return ""
       }
     } else if (rawExt === "pdf") {
@@ -142,7 +146,8 @@ async function extractTextViaOcr(content: string, format: string): Promise<strin
           timeout: 120_000,
         })
         ocrPath = join(dir, "page-1.png")
-      } catch {
+      } catch (error) {
+        console.warn(`[doc-parser] OCR: pdftoppm failed for pdf:`, error)
         return ""
       }
     }
@@ -153,7 +158,8 @@ async function extractTextViaOcr(content: string, format: string): Promise<strin
         timeout: 120_000,
       })
       return stdout.trim()
-    } catch {
+    } catch (error) {
+      console.warn(`[doc-parser] OCR: tesseract failed (${tesseract}):`, error)
       return ""
     }
   } finally {
@@ -166,7 +172,10 @@ export function parseDocument(args: { format: string; fileContent?: string }): E
     try: async () => {
       const format = (args.format ?? "").toLowerCase().replace(/^\./, "")
       const content = args.fileContent ?? ""
-      if (!content) return { text: "" }
+      if (!content) {
+        console.warn(`[doc-parser] empty fileContent for format=${format || "(unset)"}, returning empty text`)
+        return { text: "" }
+      }
       let text = ""
       if (["txt", "md", "markdown", "text"].includes(format)) {
         text = decodeText(content)
@@ -178,6 +187,12 @@ export function parseDocument(args: { format: string; fileContent?: string }): E
       // OCR 兜底：内置解析拿不到文本（扫描件/不支持格式）时调 tesseract -l chi_sim
       if (!text) {
         text = await extractTextViaOcr(content, format)
+        if (!text) {
+          console.warn(
+            `[doc-parser] builtin extraction and OCR both produced no text for format=${format || "(unset)"} ` +
+              `(bytes=${Buffer.byteLength(content, "base64")})`,
+          )
+        }
       }
       return { text }
     },

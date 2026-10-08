@@ -24,7 +24,14 @@ export class EntityExtractor extends Context.Service<
       return EntityExtractor.of({
         extract: (args) =>
           Effect.gen(function* () {
-            if (!baseUrl) return heuristicExtract(args.text)
+            if (!baseUrl) {
+              // console 而非 Effect.log：生产 journald 只收得到 console.*
+              console.warn(
+                `[entity-extractor] KNOWLEDGE_LLM_BASE_URL not set, using heuristic extract (title=${args.title} ` +
+                  `textLength=${args.text.length})`,
+              )
+              return heuristicExtract(args.text)
+            }
             const url = `${baseUrl.replace(/\/+$/, "")}/chat/completions`
             const response = yield* http
               .execute(
@@ -44,14 +51,57 @@ export class EntityExtractor extends Context.Service<
                   ),
                 ),
               )
-              .pipe(Effect.catch(() => Effect.succeed(null)))
-            if (!response || response.status !== 200) return heuristicExtract(args.text)
-            const body = (yield* Effect.catch(response.json, () => Effect.succeed(null))) as
-              | { choices?: Array<{ message?: { content?: string } }> }
-              | null
+              .pipe(
+                // 之前静默退回启发式抽取，LLM 故障在日志里毫无痕迹；降级必须留原因
+                Effect.catch((error) =>
+                  Effect.sync(() => {
+                    console.warn(
+                      `[entity-extractor] llm request failed, falling back to heuristic url=${url} model=${model} ` +
+                        `textLength=${args.text.length}: ` +
+                        (error instanceof Error ? error.message : String(error)),
+                    )
+                    return null
+                  }),
+                ),
+              )
+            if (!response) return heuristicExtract(args.text)
+            if (response.status !== 200) {
+              console.warn(
+                `[entity-extractor] llm non-200, falling back to heuristic url=${url} model=${model} ` +
+                  `status=${response.status} textLength=${args.text.length}`,
+              )
+              return heuristicExtract(args.text)
+            }
+            const body = (yield* Effect.catch(response.json, (error) =>
+              Effect.sync(() => {
+                console.warn(
+                  `[entity-extractor] llm response json parse failed model=${model}: ` +
+                    (error instanceof Error ? error.message : String(error)),
+                )
+                return null
+              }),
+            )) as { choices?: Array<{ message?: { content?: string } }> } | null
             const content = body?.choices?.[0]?.message?.content
-            if (!content) return heuristicExtract(args.text)
-            return yield* parseLlmOutput(content).pipe(Effect.catch(() => Effect.succeed(heuristicExtract(args.text))))
+            if (!content) {
+              console.warn(`[entity-extractor] llm response has no content, falling back to heuristic model=${model}`)
+              return heuristicExtract(args.text)
+            }
+            const graph = yield* parseLlmOutput(content).pipe(
+              Effect.catch((error) =>
+                Effect.sync(() => {
+                  console.warn(
+                    `[entity-extractor] llm output json invalid, falling back to heuristic model=${model}: ` +
+                      (error instanceof Error ? error.message : String(error)),
+                  )
+                  return heuristicExtract(args.text)
+                }),
+              ),
+            )
+            console.log(
+              `[entity-extractor] llm extract ok model=${model} entities=${graph.entities.length} ` +
+                `relations=${graph.relations.length} textLength=${args.text.length}`,
+            )
+            return graph
           }),
       })
     }),

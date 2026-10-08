@@ -83,6 +83,10 @@ export class IngestService extends Context.Service<IngestService, IngestServiceS
               userId: args.identity.userId,
               documentCount: args.documents.length,
             })
+            console.log(
+              `[knowledge-ingest] start workspaceId=${args.workspaceId} scope=${scope} ` +
+                `userId=${args.identity.userId} documents=${args.documents.length}`,
+            )
 
             const runOne = (doc: IngestDocumentInput): Effect.Effect<
               { entities: number; relations: number; summary: "SUCCESS" | "SKIPPED" | null },
@@ -101,7 +105,21 @@ export class IngestService extends Context.Service<IngestService, IngestServiceS
                     deletedRelations: deleted.deletedRelations,
                   })
                   if (doc.llmPath) {
-                    yield* summaryWriter.delete({ workspaceLlmPath: doc.llmPath, documentId: doc.documentId })
+                    const deletedSummary = yield* Effect.result(
+                      summaryWriter.delete({ workspaceLlmPath: doc.llmPath, documentId: doc.documentId }),
+                    )
+                    if (deletedSummary._tag === "Failure") {
+                      // 只补日志：失败仍按原语义向上抛（任务 FAILED）
+                      // console 而非 Effect.log：生产 journald 只收得到 console.*
+                      console.warn(
+                        `[knowledge-ingest] delete summary failed documentId=${doc.documentId} ` +
+                          `llmPath=${doc.llmPath}: ` +
+                          (deletedSummary.failure instanceof Error
+                            ? deletedSummary.failure.message
+                            : String(deletedSummary.failure)),
+                      )
+                      yield* Effect.fail(deletedSummary.failure)
+                    }
                   }
                   return {
                     entities: deleted.deletedEntities,
@@ -109,8 +127,28 @@ export class IngestService extends Context.Service<IngestService, IngestServiceS
                     summary: doc.llmPath ? "SUCCESS" : null,
                   }
                 }
+                // 生产 journald 只收得到 console.*，关键轨迹用 console； Effect.log* 仅开发环境可见
+                console.log(
+                  `[knowledge-ingest] doc start documentId=${doc.documentId} operation=${doc.operation} ` +
+                    `format=${doc.format ?? ""} fileContentLength=${doc.fileContent?.length ?? 0} ` +
+                    `llmPath=${doc.llmPath ? "yes" : "no"}`,
+                )
                 const parsed = yield* parseDocument({ format: doc.format ?? "", fileContent: doc.fileContent })
+                // 解析出空文本是最常见的"静默失败"：扫描件 OCR 缺工具、docx 结构异常、fileContent 为空
+                // 都会一路"成功"到 0 实体 0 关系，业务侧表现为入库无效，这里必须显式留痕
+                if (!parsed.text) {
+                  console.warn(
+                    `[knowledge-ingest] parsed to empty text documentId=${doc.documentId} ` +
+                      `format=${doc.format ?? ""} fileContentLength=${doc.fileContent?.length ?? 0}`,
+                  )
+                } else {
+                  console.log(`[knowledge-ingest] parse done documentId=${doc.documentId} textLength=${parsed.text.length}`)
+                }
                 const extracted = yield* extractor.extract({ title: doc.title, text: parsed.text })
+                console.log(
+                  `[knowledge-ingest] extract done documentId=${doc.documentId} ` +
+                    `entities=${extracted.entities.length} relations=${extracted.relations.length}`,
+                )
                 yield* Effect.logInfo("knowledge ingest write graph", {
                   documentId: doc.documentId,
                   workspaceId: args.workspaceId,
@@ -136,6 +174,10 @@ export class IngestService extends Context.Service<IngestService, IngestServiceS
                 })
                 let summary: "SUCCESS" | "SKIPPED" | null = null
                 if (doc.llmPath) {
+                  // wiki 会话是历史上最容易挂住的阶段：看到 summary start 而迟迟没有 job done 即挂起实锤
+                  console.log(
+                    `[knowledge-ingest] summary start documentId=${doc.documentId} workspaceLlmPath=${doc.llmPath}`,
+                  )
                   yield* Effect.logInfo("knowledge summary start", {
                     documentId: doc.documentId,
                     workspaceId: args.workspaceId,
@@ -159,12 +201,10 @@ export class IngestService extends Context.Service<IngestService, IngestServiceS
                   if (timed._tag === "Failure") {
                     const err = timed.failure instanceof Error ? timed.failure.message : String(timed.failure)
                     wikiResult = { status: "SKIPPED", error: `wiki session timed out or failed: ${err}` }
-                    yield* Effect.logWarning("knowledge summary skipped (timeout/failure)", {
-                      documentId: doc.documentId,
-                      workspaceId: args.workspaceId,
-                      workspaceLlmPath: doc.llmPath,
-                      error: err,
-                    })
+                    console.warn(
+                      `[knowledge-ingest] summary skipped (timeout/failure) documentId=${doc.documentId} ` +
+                        `llmPath=${doc.llmPath}: ${err}`,
+                    )
                   } else {
                     wikiResult = timed.success
                   }
@@ -189,27 +229,22 @@ export class IngestService extends Context.Service<IngestService, IngestServiceS
                     )
                     if (persistOutcome._tag === "Failure") {
                       summary = "SKIPPED"
-                      yield* Effect.logWarning("knowledge summary persist failed", {
-                        documentId: doc.documentId,
-                        workspaceId: args.workspaceId,
-                        workspaceLlmPath: doc.llmPath,
-                        sourcePath: wikiResult.sourcePath,
-                        error:
-                          persistOutcome.failure instanceof Error
+                      console.warn(
+                        `[knowledge-ingest] summary persist failed documentId=${doc.documentId} ` +
+                          `sourcePath=${wikiResult.sourcePath}: ` +
+                          (persistOutcome.failure instanceof Error
                             ? persistOutcome.failure.message
-                            : String(persistOutcome.failure),
-                      })
+                            : String(persistOutcome.failure)),
+                      )
                     } else {
                       summary = "SUCCESS"
                     }
                   } else {
                     summary = "SKIPPED"
-                    yield* Effect.logWarning("knowledge summary skipped", {
-                      documentId: doc.documentId,
-                      workspaceId: args.workspaceId,
-                      workspaceLlmPath: doc.llmPath,
-                      error: wikiResult.error,
-                    })
+                    console.warn(
+                      `[knowledge-ingest] summary skipped documentId=${doc.documentId} ` +
+                        `llmPath=${doc.llmPath}: ${wikiResult.error ?? "(no source page)"}`,
+                    )
                   }
                 } else {
                   yield* Effect.logDebug("knowledge summary skipped: no llmPath", {
@@ -217,6 +252,11 @@ export class IngestService extends Context.Service<IngestService, IngestServiceS
                     workspaceId: args.workspaceId,
                   })
                 }
+                console.log(
+                  `[knowledge-ingest] doc done documentId=${doc.documentId} ` +
+                    `entities=${result.entityCount} relations=${result.relationCount} ` +
+                    `summary=${summary ?? "none"}`,
+                )
                 return {
                   entities: result.entityCount,
                   relations: result.relationCount,
@@ -230,6 +270,10 @@ export class IngestService extends Context.Service<IngestService, IngestServiceS
               // 避免现场每 30 分钟重发把信号量槽位越占越多、加重堵塞。返回该活动 job 状态。
               const active = yield* store.countActiveByDocument(doc.documentId)
               if (active > 0) {
+                console.warn(
+                  `[knowledge-ingest] dedup skip duplicate documentId=${doc.documentId} ` +
+                    `workspaceId=${args.workspaceId} activeRunning=${active}`,
+                )
                 yield* Effect.logWarning("knowledge ingest dedup: skip duplicate", {
                   documentId: doc.documentId,
                   workspaceId: args.workspaceId,

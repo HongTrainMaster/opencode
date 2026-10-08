@@ -62,7 +62,20 @@ export const KnowledgeIngestHandler = HttpApiBuilder.group(
                 identity,
                 documents: ctx.payload.documents,
               })
-              .pipe(Effect.catchTag("IngestForbiddenError", () => Effect.succeed(null)))
+              .pipe(
+                // 提交阶段失败此前要么变 500 无上下文、要么被 catchTag 吞成 403；先留日志再走原错误流
+                // console 而非 Effect.log：生产 journald 只收得到 console.*
+                Effect.tapError((error) =>
+                  Effect.sync(() => {
+                    console.error(
+                      `[knowledge-ingest] submit failed workspaceId=${workspaceId} documentCount=${documentCount} ` +
+                        `userId=${identity.userId} tag=${(error as { _tag?: string })._tag ?? "?"}: ` +
+                        (error instanceof Error ? error.message : String(error)),
+                    )
+                  }),
+                ),
+                Effect.catchTag("IngestForbiddenError", () => Effect.succeed(null)),
+              )
             if (data === null) return HttpServerResponse.empty({ status: 403 })
             return { code: 200, data }
           }),
