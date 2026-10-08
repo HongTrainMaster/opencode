@@ -1,4 +1,4 @@
-import { Config as EffectConfig, Context, Effect, Layer } from "effect"
+import { Config as EffectConfig, Context, Duration, Effect, Layer } from "effect"
 import { HttpBody, HttpClient, HttpClientRequest } from "effect/unstable/http"
 
 export interface ExtractedGraph {
@@ -21,6 +21,10 @@ export class EntityExtractor extends Context.Service<
       const baseUrl = yield* EffectConfig.string("KNOWLEDGE_LLM_BASE_URL").pipe(EffectConfig.withDefault(""))
       const apiKey = yield* EffectConfig.string("KNOWLEDGE_LLM_API_KEY").pipe(EffectConfig.withDefault(""))
       const model = yield* EffectConfig.string("KNOWLEDGE_LLM_MODEL").pipe(EffectConfig.withDefault("gpt-4o-mini"))
+      // LLM 请求单次超时：产线上出现过端点接受连接但不响应，导致入库 job 永久卡 RUNNING
+      // （且同文档去重机制会拒绝后续重试）。超时后降级词频兜底。环境变量可调，默认 120 秒；0 = 不设超时。
+      const timeoutMs = Number.parseInt(process.env.KNOWLEDGE_LLM_TIMEOUT_MS ?? "120000", 10)
+      const timeout = Number.isFinite(timeoutMs) && timeoutMs > 0 ? Duration.millis(timeoutMs) : undefined
       return EntityExtractor.of({
         extract: (args) =>
           Effect.gen(function* () {
@@ -33,37 +37,39 @@ export class EntityExtractor extends Context.Service<
               return heuristicExtract(args.text)
             }
             const url = `${baseUrl.replace(/\/+$/, "")}/chat/completions`
-            const response = yield* http
-              .execute(
-                HttpClientRequest.post(url).pipe(
-                  HttpClientRequest.setHeader("Content-Type", "application/json"),
-                  HttpClientRequest.setHeader("Authorization", `Bearer ${apiKey}`),
-                  HttpClientRequest.setBody(
-                    HttpBody.jsonUnsafe({
-                      model,
-                      temperature: 0,
-                      response_format: { type: "json_object" },
-                      messages: [
-                        { role: "system", content: SYSTEM_PROMPT },
-                        { role: "user", content: `文档标题：${args.title}\n\n正文：\n${truncateText(args.text, 24_000)}` },
-                      ],
-                    }),
-                  ),
-                ),
-              )
-              .pipe(
-                // 之前静默退回启发式抽取，LLM 故障在日志里毫无痕迹；降级必须留原因
-                Effect.catch((error) =>
-                  Effect.sync(() => {
-                    console.warn(
-                      `[entity-extractor] llm request failed, falling back to heuristic url=${url} model=${model} ` +
-                        `textLength=${args.text.length}: ` +
-                        (error instanceof Error ? error.message : String(error)),
-                    )
-                    return null
+            const request = http.execute(
+              HttpClientRequest.post(url).pipe(
+                HttpClientRequest.setHeader("Content-Type", "application/json"),
+                HttpClientRequest.setHeader("Authorization", `Bearer ${apiKey}`),
+                HttpClientRequest.setBody(
+                  HttpBody.jsonUnsafe({
+                    model,
+                    temperature: 0,
+                    response_format: { type: "json_object" },
+                    messages: [
+                      { role: "system", content: SYSTEM_PROMPT },
+                      { role: "user", content: `文档标题：${args.title}\n\n正文：\n${truncateText(args.text, 24_000)}` },
+                    ],
                   }),
                 ),
-              )
+              ),
+            )
+            const response = yield* (timeout ? request.pipe(Effect.timeout(timeout)) : request).pipe(
+              // 之前静默退回启发式抽取，LLM 故障在日志里毫无痕迹；降级必须留原因
+              // 注：beta.83 的 TimeoutError 可能没有 message 属性，所以 message 为空时退回 _tag
+              Effect.catch((error) =>
+                Effect.sync(() => {
+                  console.warn(
+                    `[entity-extractor] llm request failed or timed out, falling back to heuristic url=${url} model=${model} ` +
+                      `timeoutMs=${timeoutMs} textLength=${args.text.length}: ` +
+                      (error instanceof Error && error.message
+                        ? error.message
+                        : String((error as { _tag?: string })?._tag ?? error ?? "timeout")),
+                  )
+                  return null
+                }),
+              ),
+            )
             if (!response) return heuristicExtract(args.text)
             if (response.status !== 200) {
               console.warn(
