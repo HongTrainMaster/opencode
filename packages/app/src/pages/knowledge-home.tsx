@@ -103,11 +103,12 @@ export function KnowledgeHome() {
     } catch {}
   }
 
-  // Create a session with the first workspace (quick start)
+  // 新建会话：用当前选中的知识目录；未选中时回退第一个（快速开始）
+  // 之前硬编码 wsList[0]，导致选了目录再点"新建会话"仍落到默认目录
   const handleNewSession = () => {
-    const wsList = workspaces()
-    if (!wsList || wsList.length === 0) return
-    handleCreateDraft(wsList[0])
+    const ws = activeWorkspace()
+    if (!ws) return
+    handleCreateDraft(ws)
   }
   const handleSelectWorkspace = (workspaceId: string) => {
     setSelectedWorkspace(workspaceId)
